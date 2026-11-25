@@ -1,0 +1,470 @@
+{
+ "toolbars": [
+  {
+   "id": "main",
+   "title": "Main",
+   "tools": [
+    "save",
+    "select",
+    "eraser",
+    "paint",
+    "eyedropper"
+   ],
+   "area": "top",
+   "order": 0
+  },
+  {
+   "id": "draw",
+   "title": "Draw",
+   "tools": [
+    "line",
+    "freehand",
+    "rectangle",
+    "rotated_rect",
+    "circle",
+    "polygon",
+    "arc",
+    "arc3",
+    "center_arc",
+    "pie"
+   ],
+   "area": "left",
+   "order": 0
+  },
+  {
+   "id": "modify",
+   "title": "Modify",
+   "tools": [
+    "pushpull",
+    "move",
+    "rotate",
+    "scale",
+    "flip",
+    "followme",
+    "offset",
+    "fillet"
+   ],
+   "area": "top",
+   "order": 1
+  },
+  {
+   "id": "annotate",
+   "title": "Annotate",
+   "tools": [
+    "tape",
+    "protractor",
+    "dimension",
+    "text",
+    "geopath",
+    "text3d"
+   ],
+   "area": "left",
+   "order": 1
+  },
+  {
+   "id": "sections",
+   "title": "Sections",
+   "tools": [
+    "section",
+    "section_planes",
+    "section_cuts",
+    "section_fill"
+   ],
+   "area": "top",
+   "order": 3
+  },
+  {
+   "id": "solids",
+   "title": "Solid Tools",
+   "tools": [
+    "outer_shell",
+    "solid_union",
+    "solid_subtract",
+    "solid_trim",
+    "solid_intersect",
+    "solid_split"
+   ],
+   "area": "top",
+   "order": 5
+  },
+  {
+   "id": "walkthrough",
+   "title": "Walkthrough",
+   "tools": [
+    "position_camera",
+    "walk",
+    "look_around",
+    "first_person"
+   ],
+   "area": "left",
+   "order": 2
+  },
+  {
+   "id": "view",
+   "title": "View",
+   "tools": [
+    "orbit",
+    "pan",
+    "zoom",
+    "zoom_window",
+    "zoom_extents",
+    "zoom_selection"
+   ],
+   "area": "top",
+   "order": 2
+  },
+  {
+   "id": "views",
+   "title": "Standard Views",
+   "tools": [
+    "view_iso",
+    "view_top",
+    "view_front",
+    "view_right",
+    "view_left",
+    "view_back",
+    "view_bottom"
+   ],
+   "area": "top",
+   "order": 4
+  }
+ ],
+ "tools": {
+  "select": {
+   "name": "Select",
+   "shortcut": "Space",
+   "shortcut_alt": "",
+   "description": "Pick edges, faces and objects. Shift+click adds or takes away, Ctrl+click adds, Shift+Ctrl+click takes away; the same with a box."
+  },
+  "line": {
+   "name": "Line",
+   "shortcut": "L",
+   "shortcut_alt": "",
+   "description": "Draw edges point by point; closing a loop makes a face."
+  },
+  "freehand": {
+   "name": "Freehand",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Drag to sketch a curve; a stroke that ends where it began closes into a face."
+  },
+  "rectangle": {
+   "name": "Rectangle",
+   "shortcut": "R",
+   "shortcut_alt": "",
+   "description": "Draw a rectangle from two opposite corners."
+  },
+  "rotated_rect": {
+   "name": "Rotated Rect",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Draw a rectangle at any angle and in any plane: a base edge, then the width."
+  },
+  "circle": {
+   "name": "Circle",
+   "shortcut": "C",
+   "shortcut_alt": "",
+   "description": "Draw a circle from its centre and radius."
+  },
+  "polygon": {
+   "name": "Polygon",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Draw a regular polygon from its centre and radius; type a number followed by «s» to change the sides."
+  },
+  "arc": {
+   "name": "Arc",
+   "shortcut": "A",
+   "shortcut_alt": "",
+   "description": "Draw an arc from its two ends, then pull out its bulge."
+  },
+  "arc3": {
+   "name": "3-Point Arc",
+   "shortcut": "J",
+   "shortcut_alt": "",
+   "description": "Draw an arc that passes through three points."
+  },
+  "center_arc": {
+   "name": "Center Arc",
+   "shortcut": "Shift+O",
+   "shortcut_alt": "",
+   "description": "Draw an arc from its centre: the centre, where the arc starts, then the angle it sweeps."
+  },
+  "pie": {
+   "name": "Pie",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Draw an arc from its centre whose two radii close it into a slice-shaped face."
+  },
+  "pushpull": {
+   "name": "Push / Pull",
+   "shortcut": "P",
+   "shortcut_alt": "U",
+   "description": "Push or pull a face to extrude it into a solid or cut it back."
+  },
+  "offset": {
+   "name": "Offset",
+   "shortcut": "F",
+   "shortcut_alt": "",
+   "description": "Draw a copy of a face's outline at an even distance inside or outside it — walls with thickness."
+  },
+  "move": {
+   "name": "Move",
+   "shortcut": "M",
+   "shortcut_alt": "",
+   "description": "Move the selection, or what you click, to a new place; Ctrl leaves a copy behind."
+  },
+  "rotate": {
+   "name": "Rotate",
+   "shortcut": "Q",
+   "shortcut_alt": "",
+   "description": "Turn the selection around a centre with the protractor; Ctrl leaves a copy behind."
+  },
+  "scale": {
+   "name": "Scale",
+   "shortcut": "S",
+   "shortcut_alt": "",
+   "description": "Resize the selection by dragging the grips of its box; the corners keep its proportions."
+  },
+  "flip": {
+   "name": "Flip",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Mirror the selection across its red, green or blue plane."
+  },
+  "followme": {
+   "name": "Follow Me",
+   "shortcut": "W",
+   "shortcut_alt": "",
+   "description": "Sweep a face along a path of edges — mouldings, pipes, turned shapes."
+  },
+  "fillet": {
+   "name": "Fillet 3D",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Round the edges of a solid to the radius you set."
+  },
+  "paint": {
+   "name": "Paint",
+   "shortcut": "B",
+   "shortcut_alt": "",
+   "description": "Click faces to paint them with the chosen material."
+  },
+  "dimension": {
+   "name": "Dimension",
+   "shortcut": "D",
+   "shortcut_alt": "",
+   "description": "Place a dimension that shows the distance between two points."
+  },
+  "eraser": {
+   "name": "Eraser",
+   "shortcut": "E",
+   "shortcut_alt": "",
+   "description": "Click or drag over edges to erase them, together with the faces they bound."
+  },
+  "tape": {
+   "name": "Tape Measure",
+   "shortcut": "T",
+   "shortcut_alt": "",
+   "description": "Measure distances, or pull guide lines off edges to draw against."
+  },
+  "protractor": {
+   "name": "Protractor",
+   "shortcut": "Shift+H",
+   "shortcut_alt": "",
+   "description": "Measure angles and place guide lines at an angle."
+  },
+  "text": {
+   "name": "Text",
+   "shortcut": "X",
+   "shortcut_alt": "",
+   "description": "Place a text with a leader pointing at the model; it suggests the length, area or coordinates of what you click."
+  },
+  "geopath": {
+   "name": "Path",
+   "shortcut": "Y",
+   "shortcut_alt": "",
+   "description": "Trace a path over the base map — a road, a boundary — to profile or measure it; the model is left untouched."
+  },
+  "section": {
+   "name": "Section Plane",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Place a plane that cuts the model open to show its inside."
+  },
+  "position_camera": {
+   "name": "Position Camera",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Click where to stand and the eye goes there at a person's height; drag to also say where to look."
+  },
+  "walk": {
+   "name": "Walk",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Drag to walk through the model at eye height: up and down go forward and back, left and right turn."
+  },
+  "look_around": {
+   "name": "Look Around",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Drag to turn your head; the eye stays where it is."
+  },
+  "first_person": {
+   "name": "First Person",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Walk as in a game: W, A, S and D move, the mouse turns the head."
+  },
+  "outer_shell": {
+   "name": "Outer Shell",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Merge the selected solids into one, keeping only their outer skin."
+  },
+  "solid_union": {
+   "name": "Union",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Join solids into a single solid."
+  },
+  "solid_subtract": {
+   "name": "Subtract",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Cut the first solid clicked out of the second, and remove the first."
+  },
+  "solid_trim": {
+   "name": "Trim",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Cut the first solid clicked out of the second, and keep the first."
+  },
+  "solid_intersect": {
+   "name": "Intersect",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Keep only the part where the solids overlap."
+  },
+  "solid_split": {
+   "name": "Split",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Split two overlapping solids into their separate parts and their common part."
+  },
+  "orbit": {
+   "name": "Orbit",
+   "shortcut": "O",
+   "shortcut_alt": "",
+   "description": "Left-drag to rotate the view."
+  },
+  "pan": {
+   "name": "Pan",
+   "shortcut": "H",
+   "shortcut_alt": "",
+   "description": "Left-drag to slide the view."
+  },
+  "zoom": {
+   "name": "Zoom",
+   "shortcut": "Z",
+   "shortcut_alt": "",
+   "description": "Drag up/down to zoom in/out."
+  },
+  "zoom_window": {
+   "name": "Zoom Window",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Drag a box to zoom to that region."
+  },
+  "zoom_extents": {
+   "name": "Zoom Extents",
+   "shortcut": "Shift+Z",
+   "shortcut_alt": "F2",
+   "description": "Frame the whole model."
+  },
+  "zoom_selection": {
+   "name": "Zoom Selection",
+   "shortcut": "Ctrl+Alt+Z",
+   "shortcut_alt": "",
+   "description": "Frame the selection."
+  },
+  "save": {
+   "name": "Save",
+   "shortcut": "Ctrl+S",
+   "shortcut_alt": "",
+   "description": "Save the document."
+  },
+  "eyedropper": {
+   "name": "Sample material",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Pick up a face's paint."
+  },
+  "section_planes": {
+   "name": "Section Planes",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Show the section planes."
+  },
+  "section_cuts": {
+   "name": "Section Cuts",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Cut the model open at its planes."
+  },
+  "section_fill": {
+   "name": "Section Fill",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Fill the cut faces."
+  },
+  "text3d": {
+   "name": "3D Text",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Insert 3D text."
+  },
+  "view_iso": {
+   "name": "Isometric",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Isometric view."
+  },
+  "view_top": {
+   "name": "Top",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Top view."
+  },
+  "view_front": {
+   "name": "Front",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Front view."
+  },
+  "view_right": {
+   "name": "Right",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Right view."
+  },
+  "view_left": {
+   "name": "Left",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Left view."
+  },
+  "view_back": {
+   "name": "Back",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Back view."
+  },
+  "view_bottom": {
+   "name": "Bottom",
+   "shortcut": "",
+   "shortcut_alt": "",
+   "description": "Bottom view."
+  }
+ }
+}

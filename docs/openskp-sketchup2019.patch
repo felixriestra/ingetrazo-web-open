@@ -1,0 +1,26 @@
+--- a/openskp/legacy.py
++++ b/openskp/legacy.py
+@@ -1003,7 +1003,10 @@
+             raise LegacyParseError(f"entity ref is a new object {r.ctx()}")
+         return big
+     if tag == 0xFFFF or tag & 0x8000:
+-        raise LegacyParseError(f"entity ref is a new object {r.ctx()}")
++        # SketchUp 2019: the first reference may carry the target object inline
++        r.pos -= 2
++        slot, _, _ = ar.read_object(r)
++        return slot
+     return tag
+ 
+ 
+@@ -1174,6 +1177,11 @@
+         retry = _retry_count_after_v20_filler(r, r.pos - 4, 5_000_000, ar)
+         if retry is not None:
+             count = retry
++    # SketchUp 2019: two extra bytes sit ahead of the count, so the u32 was read 2 bytes
++    # early and came out as (count << 16)
++    if count & 0xFFFF == 0 and 0 < (count >> 16) <= 50_000:
++        count >>= 16
++        r.pos += 2
+     if count > 5_000_000:
+         raise LegacyParseError(f"implausible def entity count {r.ctx()}")
+     ents = _read_entity_list(ar, r, count, 'def')

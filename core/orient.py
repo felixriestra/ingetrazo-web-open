@@ -1,0 +1,1071 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Marco Sumari Tellez and IngeTrazo contributors.
+"""Consistent outward orientation for closed solids in the non-manifold mesh.
+
+The root-fix invariant: every face of a closed solid is wound so its normal
+points *outward* from the enclosed volume. The solid push/pull pipeline relies
+on it at both ends — it orients **on entry** (hand-built or loaded meshes can
+arrive with mixed winding) so the naive extrude's deterministic quad winding
+and the per-plane rebuild's material-side classification (:mod:`core.
+cap_rebuild`) can trust face normals, and **on exit** so every committed solid
+upholds the invariant for the next edit.
+
+The mesh is **shared-vertex, non-manifold** (an interior wall is shared by two
+rooms; an edge can border three faces), so winding does *not* propagate cleanly
+through half-edges — there is no single "the other face across this edge". So
+orientation is decided **per face, independently**, by parity ray casting: a
+point just off a face along its normal is *outside* the solid iff a ray from it
+crosses the rest of the mesh an even number of times. That is robust to
+non-manifold edges and needs no seed face.
+
+Only meaningful for a **closed** component (no boundary edges). Flat drawings and
+open sheets have no inside/outside, so the entry points no-op on them.
+"""
+from __future__ import annotations
+
+import math
+import random
+import weakref
+from typing import Optional
+
+from PySide6.QtGui import QVector3D
+
+from core.mesh import turn_face_over
+
+# Ray/triangle hit tolerance and the small offset used to lift the sample point
+# off the face it sits on.
+_EPS = 1e-7
+_T_MIN = 1e-6
+# Number of jittered rays voted over to step around degenerate hits (a ray that
+# grazes a shared edge or vertex would be counted 0 or 2 times). The face normal
+# is one of them; the rest are small angular perturbations. The jitter must be
+# *small*: the lateral deviation grows linearly with distance, and a wide cone
+# (it used to be 0.08) overshoots thin features far away — a 0.3 m belt strip
+# at 4 m deviated by ±0.32 m, so most rays missed it and the vote read "no
+# material" by seed luck. 3e-4 keeps the deviation ~2 cm even 60 m out while
+# still dodging exact edge/vertex grazes of human-valued coordinates.
+_RAYS = 7
+_JITTER = 3e-4
+
+
+Triangle = tuple[QVector3D, QVector3D, QVector3D]
+
+
+# ---- Ray / triangle --------------------------------------------------------
+
+def _ray_triangle(origin: QVector3D, direction: QVector3D, tri: Triangle) -> Optional[float]:
+    """Möller–Trumbore. Returns the ray parameter ``t > 0`` of the intersection
+    with ``tri``, or ``None`` (miss / parallel / behind)."""
+    a, b, c = tri
+    e1 = b - a
+    e2 = c - a
+    p = QVector3D.crossProduct(direction, e2)
+    det = QVector3D.dotProduct(e1, p)
+    if abs(det) < _EPS:
+        return None  # parallel
+    inv = 1.0 / det
+    tvec = origin - a
+    u = QVector3D.dotProduct(tvec, p) * inv
+    if u < -_EPS or u > 1.0 + _EPS:
+        return None
+    q = QVector3D.crossProduct(tvec, e1)
+    v = QVector3D.dotProduct(direction, q) * inv
+    if v < -_EPS or u + v > 1.0 + _EPS:
+        return None
+    t = QVector3D.dotProduct(e2, q) * inv
+    return t if t > _T_MIN else None
+
+
+def _basis(n: QVector3D) -> tuple[QVector3D, QVector3D]:
+    """Two unit vectors perpendicular to ``n`` (for jittering a ray direction)."""
+    ref = QVector3D(1.0, 0.0, 0.0)
+    if abs(QVector3D.dotProduct(ref, n)) > 0.9:
+        ref = QVector3D(0.0, 1.0, 0.0)
+    u = QVector3D.crossProduct(n, ref).normalized()
+    v = QVector3D.crossProduct(n, u).normalized()
+    return u, v
+
+
+#: mesh -> {face: (shape, triangles)}: what each face triangulated to the
+#: last time a pass asked, and the corner positions it had then.
+_TRI_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _face_shape(face) -> tuple:
+    """Everything a face's triangulation is made from: where each corner of
+    its loop and of its holes is, in order."""
+    return (tuple(v.position.toTuple() for v in face.loop),
+            tuple(tuple(v.position.toTuple() for v in h)
+                  for h in face.hole_loops))
+
+
+def _face_triangles(mesh, only=None) -> dict:
+    """Triangulate every face once. Returns ``{face: [Triangle, …]}`` in world
+    space (holes included via the face's own earcut triangulation) — of the
+    faces in ``only`` alone when given, in mesh order.
+
+    A face whose corners are where they were the last time is not cut
+    again: an edit touches a handful of faces, and every pass re-cut all of
+    them — the one cap sixty cylinders stand on is 0.1 s of ear clipping,
+    paid three times per circle drawn and pushed."""
+    try:
+        memo = _TRI_MEMO.setdefault(mesh, {})
+    except TypeError:               # a stand-in mesh nothing can refer to
+        memo = {}
+    tris: dict = {}
+    kept: dict = {}
+    for f in mesh.faces:
+        if only is not None and f not in only:
+            continue
+        shape = _face_shape(f)
+        known = memo.get(f)
+        if known is not None and known[0] == shape:
+            t = known[1]
+        else:
+            t = f.triangulate()
+        tris[f] = t
+        kept[f] = (shape, t)
+    if only is None:
+        memo.clear()
+    else:
+        # The rest keep their entries; the faces gone from the mesh go.
+        for f in memo.keys() - set(mesh.faces):
+            del memo[f]
+    memo.update(kept)
+    return tris
+
+
+#: Faces of a shell asked by ray before the whole shell is taken at their
+#: word (see :func:`_shell_verdict`).
+_SHELL_SAMPLES = 6
+
+
+def _winds_like(hole, face) -> bool:
+    """Whether a hole's loop goes round the same way as its face's own."""
+    nx = ny = nz = 0.0
+    prev = hole[-1].position
+    x0, y0, z0 = prev.x(), prev.y(), prev.z()
+    for v in hole:
+        p = v.position
+        x1, y1, z1 = p.x(), p.y(), p.z()
+        nx += (y0 - y1) * (z0 + z1)
+        ny += (z0 - z1) * (x0 + x1)
+        nz += (x0 - x1) * (y0 + y1)
+        x0, y0, z0 = x1, y1, z1
+    n = face._newell()
+    return nx * n.x() + ny * n.y() + nz * n.z() > 0.0
+
+
+def _coherent_shells(faces, comp_of: dict) -> set:
+    """The components that are one closed skin wound one way: every segment
+    of their loops walked by exactly two of their faces, once each way.
+
+    Such a skin has no partitions (a partition's edges carry three faces)
+    and its faces cannot disagree: all of them look out, or all look in."""
+    uses: dict = {}
+    for f in faces:
+        c = comp_of[f]
+        for k, loop in enumerate((f.loop, *f.hole_loops)):
+            n = len(loop)
+            # A face keeps its material on the left of its loop and on the
+            # right of a hole wound the same way round: such a hole is read
+            # backwards, and then the two loops speak the same language.
+            turn = -1 if k and _winds_like(loop, f) else 1
+            prev = id(loop[-1]) if n else 0
+            for i in range(n):
+                cur = id(loop[i])
+                if prev < cur:
+                    key, way = (c, prev, cur), turn
+                else:
+                    key, way = (c, cur, prev), -turn
+                seen = uses.get(key)
+                # (times walked, net direction): two walks, one each way,
+                # read (2, 0).
+                uses[key] = ((1, way) if seen is None
+                             else (seen[0] + 1, seen[1] + way))
+                prev = cur
+    good = set(comp_of.values())
+    for key, walked in uses.items():
+        if walked != (2, 0):
+            good.discard(key[0])
+    return good
+
+
+def _face_components(mesh) -> dict:
+    """Face → edge-connected component label (union-find through shared
+    edges).
+
+    Inside/outside is a property of one closed shell, so parity is decided
+    against the face's *own* component: a ray from a probe outside a
+    *different* closed component crosses it an even number of times (in and
+    back out), so those triangles never change the verdict — and for probes
+    on nested or coincident imported solids, judging each shell by itself is
+    the semantically right call (a box modelled inside a room is its own
+    outward solid, not "interior" of the room). The payoff is the imported
+    group mesh (many welded bricks in one mesh): O(F·T) becomes Σ O(F_c·T_c)
+    — the barbecue's orientation pass dropped ~7×.
+
+    A label only names its component (callers compare labels, never order
+    them): here it is the component's lowest face index."""
+    faces, _edges, _first, lab = _component_arrays(mesh)
+    return dict(zip(faces, lab.tolist()))
+
+
+def _flood_components(roots, live, lab: dict, label: int) -> int:
+    """Label the components of ``roots`` (those in ``live``, the faces of
+    the mesh) into ``lab``, starting at ``label``; returns the next free
+    label. A face already labelled is not flooded again.
+
+    The same split as :func:`_face_components`: from a face, every edge at
+    its corners that lists it leads to the other faces that edge lists —
+    the edges a face bounds are the ones at its corners."""
+    for r in roots:
+        if r in lab or r not in live:
+            continue
+        c = label
+        label += 1
+        lab[r] = c
+        stack = [r]
+        while stack:
+            f = stack.pop()
+            for lp in (f.loop, *f.hole_loops):
+                for v in lp:
+                    for e in v.edges:
+                        fs = e.faces
+                        if f not in fs:
+                            continue
+                        for g in fs:
+                            if g not in lab and g in live:
+                                lab[g] = c
+                                stack.append(g)
+    return label
+
+
+def _component_arrays(mesh):
+    """``(faces, edges, edge_face, labels)`` behind :func:`_face_components`.
+
+    ``faces``/``edges`` are the mesh's, in order; ``labels[i]`` is the
+    component of ``faces[i]`` (its lowest face index); ``edge_face[k]`` is
+    the index of a face of ``edges[k]`` (every face of an edge is in one
+    component), ``-1`` when none of its faces is in the mesh and ``-2`` when
+    it has none.
+
+    The union-find walked in Python, 11 times over the whole 9 674-face
+    group for one push in the Plaza (~45 ms each, night of 19-11): now one
+    pass gathers the face pairs and NumPy hooks and jumps the labels."""
+    import numpy as np
+    faces = list(mesh.faces)
+    edges = list(mesh.edges)
+    get = {f: i for i, f in enumerate(faces)}.get
+    first_of: list = []
+    pa: list = []
+    pb: list = []
+    add_e, add_a, add_b = first_of.append, pa.append, pb.append
+    for e in edges:
+        fs = e.faces
+        if len(fs) == 2:
+            a, b = get(fs[0]), get(fs[1])
+            if a is not None and b is not None:
+                add_e(a)
+                add_a(a)
+                add_b(b)
+                continue
+        first = -1 if fs else -2
+        for f in fs:
+            j = get(f)
+            if j is None:
+                continue
+            if first < 0:
+                first = j
+            else:
+                add_a(first)
+                add_b(j)
+        add_e(first)
+    lab = np.arange(len(faces), dtype=np.int64)
+    a = np.asarray(pa, dtype=np.int64)
+    b = np.asarray(pb, dtype=np.int64)
+    while len(a):
+        la, lb = lab[a], lab[b]
+        if np.array_equal(la, lb):
+            break
+        # Hook each pair's higher root under its lower one, then jump every
+        # face to its root: labels only fall, so it settles.
+        np.minimum.at(lab, np.maximum(la, lb), np.minimum(la, lb))
+        while True:
+            up = lab[lab]
+            if np.array_equal(up, lab):
+                break
+            lab = up
+    return faces, edges, np.asarray(first_of, dtype=np.int64), lab
+
+
+class _PackedTris:
+    """Triangles flattened to NumPy arrays for batched Möller–Trumbore.
+
+    ``a``/``e1``/``e2`` are (N, 3) float64 (vertex A and the two edge vectors);
+    ``face_idx`` maps each triangle to its face's index so a query can exclude
+    faces without repacking. The parity primitive used to test each ray against
+    every triangle in pure Python — the O(F²·T) hot loop that froze the app as
+    solids grew; one vectorised pass per ray replaces it."""
+
+    __slots__ = ("a", "e1", "e2", "face_idx", "bvh", "native")
+
+    def __init__(self, a, e1, e2, face_idx) -> None:
+        self.a, self.e1, self.e2, self.face_idx = a, e1, e2, face_idx
+        self.bvh = None             # _Clusters, built on first use
+        self.native = None          # the Rust engine's copy, ditto
+
+
+#: Below this many triangles a ray just tests them all.
+_BVH_MIN_TRIS = 2048
+#: Triangles per cluster of the ray index.
+_BVH_LEAF = 32
+
+
+class _Clusters:
+    """A one-level ray index over a packed triangle set: triangles sorted
+    along a Morton curve of their centroids, cut into clusters of
+    ``_BVH_LEAF`` neighbours, each with a box grown far beyond the ray test's
+    tolerances (barycentric 1e-7, t > 1e-6). A ray keeps only the clusters
+    whose box it crosses; the exact Möller–Trumbore count then runs on those
+    triangles alone — the same count, since every triangle the exact test
+    would accept lies inside its cluster's box. Orienting one 25 797-face
+    component cast ~360 000 rays against every triangle: 3 minutes for one
+    push on the Plaza's terrain (09-10)."""
+
+    def __init__(self, packed: "_PackedTris") -> None:
+        import numpy as np
+        a, e1, e2 = packed.a, packed.e1, packed.e2
+        b, c = a + e1, a + e2
+        lo = np.minimum(np.minimum(a, b), c)
+        hi = np.maximum(np.maximum(a, b), c)
+        cen = (lo + hi) * 0.5
+        span = cen.max(axis=0) - cen.min(axis=0)
+        span[span <= 0] = 1.0
+        q = ((cen - cen.min(axis=0)) / span * 1023).astype(np.int64)
+        code = np.zeros(len(q), dtype=np.int64)
+        for bit in range(10):
+            for axis in range(3):
+                code |= ((q[:, axis] >> bit) & 1) << (3 * bit + axis)
+        order = np.argsort(code, kind="stable")
+        n = len(order)
+        starts = np.arange(0, n, _BVH_LEAF)
+        clo = np.minimum.reduceat(lo[order], starts, axis=0)
+        chi = np.maximum.reduceat(hi[order], starts, axis=0)
+        ext = (chi - clo).max(axis=1, keepdims=True)
+        big = np.maximum(np.abs(clo).max(axis=1, keepdims=True),
+                         np.abs(chi).max(axis=1, keepdims=True))
+        margin = 1e-5 + 1e-6 * big + 1e-5 * ext
+        self.lo, self.hi = clo - margin, chi + margin
+        self.cen = (self.lo + self.hi) * 0.5
+        self.half = np.linalg.norm(self.hi - self.lo, axis=1) * 0.5
+        self.order = order
+        self.counts = np.diff(np.append(starts, n))
+
+    def rows(self, origin, direction, spread: float):
+        """Rows of the triangles in a cluster any ray from ``origin`` within
+        ``spread`` radians of ``direction`` can cross: ONE slab test along
+        ``direction`` against each box grown by how far such a ray can stray
+        before leaving it (spread × the box's farthest distance) — the
+        jittered rays of one parity query differ by < 0.03°."""
+        import numpy as np
+        o = np.asarray(origin, dtype=np.float64)
+        reach = np.linalg.norm(self.cen - o, axis=1) + self.half
+        grow = (spread * reach)[:, None]
+        lo, hi = self.lo - grow, self.hi + grow
+        dv = np.asarray(direction, dtype=np.float64)
+        dv = np.where(np.abs(dv) < 1e-30, 1e-30, dv)
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            inv = 1.0 / dv
+            t1 = (lo - o) * inv
+            t2 = (hi - o) * inv
+            tmin = np.minimum(t1, t2).max(axis=1)
+            tmax = np.maximum(t1, t2).min(axis=1)
+        hit = (tmax >= tmin) & (tmax >= 0.0)
+        return self.order[np.repeat(hit, self.counts)]
+
+
+def _pack_lists(triangle_lists, face_ids=None) -> _PackedTris:
+    """Flatten ``triangle_lists`` (iterable of triangle lists) into arrays.
+    ``face_ids`` gives the face index per list (defaults to the list's order)."""
+    import numpy as np
+    # One flat pass over every corner (the rows built one by one were most
+    # of a rebuild's parity packing, night of 19-11).
+    lists = triangle_lists if isinstance(triangle_lists, list) \
+        else list(triangle_lists)
+    sizes = [len(t) for t in lists]
+    n = sum(sizes)
+    if not n:
+        return _PackedTris(np.zeros((0, 3)), np.zeros((0, 3)),
+                           np.zeros((0, 3)), np.zeros(0, dtype=np.int64))
+    xyz = np.fromiter((c for tlist in lists for tri in tlist for p in tri
+                       for c in p.toTuple()),
+                      dtype=np.float64, count=9 * n).reshape(n, 3, 3)
+    ids = (np.arange(len(lists), dtype=np.int64) if face_ids is None
+           else np.asarray(face_ids[:len(lists)], dtype=np.int64))
+    idx = np.repeat(ids, sizes)
+    a = np.ascontiguousarray(xyz[:, 0])
+    return _PackedTris(a, xyz[:, 1] - a, xyz[:, 2] - a, idx)
+
+
+def _cross_rows(a, b):
+    """Row-wise cross product without np.cross's moveaxis overhead.
+    ``a`` is (3,) or (N,3); ``b`` is (N,3)."""
+    import numpy as np
+    ax, ay, az = (a[..., 0], a[..., 1], a[..., 2])
+    bx, by, bz = b[:, 0], b[:, 1], b[:, 2]
+    return np.stack((ay * bz - az * by,
+                     az * bx - ax * bz,
+                     ax * by - ay * bx), axis=-1)
+
+
+class _ParityQuery:
+    """One origin, many jittered rays: everything that depends only on the
+    origin (tvec, q, e2·q) is computed once; each ray then costs a couple of
+    vector ops. Same eps/t-min semantics as the scalar Möller–Trumbore."""
+
+    def __init__(self, origin: QVector3D, packed: _PackedTris, mask=None) -> None:
+        import numpy as np
+        self.n = packed.a.shape[0]
+        if self.n == 0:
+            return
+        o = np.array([origin.x(), origin.y(), origin.z()], dtype=np.float64)
+        self.e1, self.e2 = packed.e1, packed.e2
+        self.base = np.ones(self.n, dtype=bool) if mask is None else mask
+        self.tvec = o - packed.a
+        self.q = _cross_rows(self.tvec, packed.e1)
+        self.e2q = np.einsum("ij,ij->i", packed.e2, self.q)
+
+    def crossings(self, d: QVector3D) -> int:
+        import numpy as np
+        if self.n == 0:
+            return 0
+        dv = np.array([d.x(), d.y(), d.z()], dtype=np.float64)
+        p = _cross_rows(dv, self.e2)
+        det = np.einsum("ij,ij->i", self.e1, p)
+        ok = (np.abs(det) >= _EPS) & self.base
+        if not ok.any():
+            return 0
+        inv = np.zeros(self.n)
+        inv[ok] = 1.0 / det[ok]
+        u = np.einsum("ij,ij->i", self.tvec, p) * inv
+        ok &= (u >= -_EPS) & (u <= 1.0 + _EPS)
+        v = (self.q @ dv) * inv
+        ok &= (v >= -_EPS) & (u + v <= 1.0 + _EPS)
+        t = self.e2q * inv
+        ok &= t > _T_MIN
+        return int(ok.sum())
+
+    def crossings_many(self, dirs) -> list:
+        """``crossings`` for several rays at once: the same arithmetic,
+        element by element, over a (rays × triangles) block instead of one
+        NumPy pass per ray (tests/test_orient_batched_rays.py checks the
+        counts against ``crossings`` itself)."""
+        import numpy as np
+        r = len(dirs)
+        if self.n == 0 or r == 0:
+            return [0] * r
+        D = np.array([[d.x(), d.y(), d.z()] for d in dirs], dtype=np.float64)
+        ax, ay, az = D[:, 0:1], D[:, 1:2], D[:, 2:3]
+        bx, by, bz = self.e2[:, 0], self.e2[:, 1], self.e2[:, 2]
+        p = np.stack((ay * bz - az * by,
+                      az * bx - ax * bz,
+                      ax * by - ay * bx), axis=-1)          # (r, n, 3)
+        det = np.einsum("ij,rij->ri", self.e1, p)
+        ok = (np.abs(det) >= _EPS) & self.base
+        inv = np.zeros((r, self.n))
+        inv[ok] = 1.0 / det[ok]
+        u = np.einsum("ij,rij->ri", self.tvec, p) * inv
+        ok &= (u >= -_EPS) & (u <= 1.0 + _EPS)
+        v = np.stack([self.q @ D[i] for i in range(r)]) * inv
+        ok &= (v >= -_EPS) & (u + v <= 1.0 + _EPS)
+        t = self.e2q * inv
+        ok &= t > _T_MIN
+        return [int(c) for c in ok.sum(axis=1)]
+
+
+def ray_parity_outside(origin: QVector3D, direction: QVector3D,
+                       triangle_lists, rng: random.Random,
+                       packed: Optional[_PackedTris] = None,
+                       mask=None, skip: Optional[int] = None) -> Optional[bool]:
+    """Whether ``origin`` sits *outside* the volume bounded by the triangles, by
+    crossing parity along jittered rays around ``direction`` (majority vote —
+    a single ray can graze a shared edge and miscount). Even crossings ahead →
+    outside (infinity is outside; each crossing flips). ``None`` on a tie.
+
+    This is the engine's one volumetric primitive: orientation asks it with a
+    face's centroid and normal, and the per-plane rebuild asks it from sample
+    points just off a plane ("is there material on this side?") — the dirty
+    overlapping coplanar faces a naive extrude leaves cancel in pairs, so the
+    answer is right even mid-cleanup, in any plane order.
+
+    Pass ``packed`` (+ optional boolean ``mask`` over its triangles) to reuse a
+    prebuilt triangle set across many queries; otherwise ``triangle_lists`` is
+    packed on the fly. Either way the crossing count is vectorised.
+    ``skip``: a face index of ``packed`` whose triangles do not count (the
+    face asking), on top of ``mask``."""
+    if packed is None:
+        packed = _pack_lists(triangle_lists)
+        mask = None
+        skip = None
+    n = direction.normalized()
+    u, v = _basis(n)
+    # The rays first (the same draws from ``rng``, in the same order).
+    rays = []
+    for r in range(_RAYS):
+        if r == 0:
+            d = n
+        else:
+            d = (n
+                 + u * rng.uniform(-_JITTER, _JITTER)
+                 + v * rng.uniform(-_JITTER, _JITTER)).normalized()
+        rays.append(d)
+    from core._native import native
+    if native is not None and packed.a.shape[0]:
+        # The Rust engine: the same exact test over the same triangles,
+        # found through its own ray index.
+        import numpy as np
+        if packed.native is None:
+            packed.native = native.ParityTris(
+                np.ascontiguousarray(packed.a, dtype=np.float64),
+                np.ascontiguousarray(packed.e1, dtype=np.float64),
+                np.ascontiguousarray(packed.e2, dtype=np.float64),
+                np.ascontiguousarray(packed.face_idx, dtype=np.int64))
+        dirs = np.array([[d.x(), d.y(), d.z()] for d in rays],
+                        dtype=np.float64)
+        counts = packed.native.crossings(
+            (origin.x(), origin.y(), origin.z()), dirs,
+            None if mask is None else np.ascontiguousarray(mask, dtype=bool),
+            None if skip is None else int(skip))
+    else:
+        counts = _python_crossings(origin, n, rays, packed, mask, skip)
+    outside_votes = 0
+    inside_votes = 0
+    for crossings in counts:
+        if crossings % 2 == 0:
+            outside_votes += 1
+        else:
+            inside_votes += 1
+    if outside_votes == inside_votes:
+        return None
+    return outside_votes > inside_votes
+
+
+def _python_crossings(origin, n, rays, packed, mask, skip) -> list:
+    """Crossing counts of ``rays`` from ``origin`` (NumPy)."""
+    if skip is not None:
+        keep = packed.face_idx != skip
+        mask = keep if mask is None else mask & keep
+    if packed.a.shape[0] >= _BVH_MIN_TRIS:
+        if packed.bvh is None:
+            packed.bvh = _Clusters(packed)
+        # Each jittered ray is within 2·√2·_JITTER of ``n`` (a unit vector
+        # nudged by two perpendicular offsets of at most _JITTER, then
+        # renormalised); the index is asked with three times that.
+        rows = packed.bvh.rows((origin.x(), origin.y(), origin.z()),
+                               (n.x(), n.y(), n.z()), 3.0 * 2.83 * _JITTER)
+        packed = _PackedTris(packed.a[rows], packed.e1[rows],
+                             packed.e2[rows], packed.face_idx[rows])
+        if mask is not None:
+            mask = mask[rows]
+    return _ParityQuery(origin, packed, mask).crossings_many(rays)
+
+
+def _face_side_state(face, tris_by_face: dict, rng: random.Random,
+                     packed: Optional[_PackedTris] = None,
+                     mask=None, skip: Optional[int] = None,
+                     probes: Optional[dict] = None,
+                     all_tris: Optional[dict] = None) -> Optional[str]:
+    """Classify ``face`` against the volume bounded by ``tris_by_face`` (the
+    current *boundary* faces): ``"outward"`` / ``"inward"`` for a boundary face
+    (by which side is empty), ``"interior"`` for a partition with material on
+    both sides (the slab a Ctrl-push keeps, a wall two rooms share), ``None``
+    when undecidable (degenerate face, tied votes).
+
+    ``packed``/``mask`` (triangles of the boundary set minus this face) let the
+    caller reuse one packed array across every face instead of re-listing —
+    the difference between O(F²·T) and O(F·T).
+
+    ``probes`` memoises each face's probe point and normal across the
+    rounds of one pass (no face changes until the flips at its end), and
+    ``all_tris`` hands the probe the triangles the pass already has: a
+    solid of 2000 faces asked for 7900 probes per push, each
+    re-triangulating its face — and the one cap holed by sixty cylinders
+    is 0.1 s of ear clipping every time."""
+    known = probes.get(face) if probes is not None else None
+    if known is not None:
+        n, probe = known
+    else:
+        n = face.normal()
+        probe = None
+    if n.length() < 1e-9:
+        return None
+    if packed is None:
+        others = [t for f, t in tris_by_face.items() if f is not face]
+    else:
+        others = None
+    # Probe from a point INSIDE the face's solid region. The loop centroid is
+    # wrong for a ring face: it falls in the hole (an annular cap's centroid
+    # sits in the tube's channel), and rays cast from the void misclassify
+    # the cap. The largest triangle's centroid always lies on material.
+    if probe is None:
+        probe = _interior_probe(
+            face, all_tris.get(face) if all_tris is not None else None)
+        if probes is not None:
+            probes[face] = (n, probe)
+    # The region just past the probe along the normal being outside is
+    # exactly the normal pointing outward.
+    ahead = ray_parity_outside(probe, n, others, rng,
+                               packed=packed, mask=mask, skip=skip)
+    if ahead is not False:
+        return "outward" if ahead else None
+    # The +normal side is inside. An inward-wound boundary face has its *other*
+    # side outside; an interior partition is inside both ways.
+    behind = ray_parity_outside(probe, -n, others, rng,
+                                packed=packed, mask=mask, skip=skip)
+    if behind is True:
+        return "inward"
+    return "interior" if behind is False else None
+
+
+def _interior_probe(face, tris=None) -> QVector3D:
+    """A point on the face's solid material.
+
+    For a HOLED face the loop centroid falls in the hole (an annular tube cap
+    probes from the channel void and flips) — use the largest triangle's
+    centroid instead. Hole-free faces keep the plain centroid: the fuzz
+    rule-set is hardened around it, and switching those probes destabilised
+    seeds (prism 151, plan 179, cube 214) for no gain."""
+    if not face.hole_loops:
+        c = face.centroid()
+        if _on_face(face, c):
+            return c
+        # A NON-CONVEX face (an L, a U) can have its vertex average off its
+        # own material — in the notch, where a step's pulled-up square now
+        # stands — and probing from there read a boundary wall and floor as
+        # interior partitions: a closed, correct solid whose volume came out
+        # 2.3 m³ short (issue #94). Only then the largest triangle.
+    if tris is None:
+        tris = face.triangulate()
+    if not tris:
+        return face.centroid()
+    t0, t1, t2 = max(
+        tris,
+        key=lambda t: QVector3D.crossProduct(t[1] - t[0],
+                                             t[2] - t[0]).lengthSquared())
+    return (t0 + t1 + t2) / 3.0
+
+
+def _on_face(face, p: QVector3D) -> bool:
+    """Whether ``p`` (on the face's plane) lies inside its outer loop."""
+    from core.arrangement import _point_in_polygon, plane_basis
+    n = face.normal()
+    if n.length() < 1e-12:
+        return True
+    u, v = plane_basis(n.normalized())
+    loop = [((q - p).x() * u.x() + (q - p).y() * u.y() + (q - p).z() * u.z(),
+             (q - p).x() * v.x() + (q - p).y() * v.y() + (q - p).z() * v.z())
+            for q in face.vertices]
+    return _point_in_polygon((0.0, 0.0), loop)
+
+
+# ---- Public API ------------------------------------------------------------
+
+def _all_coplanar(mesh) -> bool:
+    """Cheap flatness test: every face on one plane (a 2D drawing)."""
+    first = mesh.faces[0]
+    n = first.normal()
+    o = first.centroid()
+    for f in mesh.faces:
+        fn = f.normal()
+        if abs(QVector3D.dotProduct(fn, n)) < 0.999:
+            return False
+        if abs(QVector3D.dotProduct(f.centroid() - o, n)) > 1e-4:
+            return False
+    return True
+
+
+def is_closed(mesh) -> bool:
+    """Whether the mesh has no boundary: every edge borders at least two faces.
+    A necessary condition for inside/outside (and thus orientation) to mean
+    anything. Open sheets and flat drawings return ``False``."""
+    if not mesh.faces:
+        return False
+    return all(len(e.faces) >= 2 for e in mesh.edges)
+
+
+def signed_volume(mesh) -> float:
+    """Signed volume of the mesh as currently wound (sum of tetrahedra from the
+    origin over each triangulated face). For a consistently-oriented closed
+    solid its magnitude is the real volume and its sign reports the global
+    winding (positive == outward by the right-hand rule). Mixed winding gives a
+    meaningless value — use it only to confirm consistency. Interior partitions
+    (marked by :func:`orient_outward`) are not boundary and are skipped — their
+    arbitrary winding would bias the sum.
+
+    Summed in double from the float32 corners: with ``QVector3D``'s float32
+    dot and cross products the total moved by a few millionths when a face
+    was cut into other triangles, by a different amount on each platform."""
+    total = 0.0
+    for f in mesh.faces:
+        if f.interior:
+            continue
+        for a, b, c in f.triangulate():
+            ax, ay, az = a.x(), a.y(), a.z()
+            bx, by, bz = b.x(), b.y(), b.z()
+            cx, cy, cz = c.x(), c.y(), c.z()
+            total += (ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz)
+                      + az * (bx * cy - by * cx))
+    return total / 6.0
+
+
+def orient_outward_each(mesh, faces, seed: int = 12345) -> list:
+    """Exactly ``for f in faces: orient_outward(mesh, seed, only=(f,))`` —
+    the same flips, the same ``interior`` marks, the same rays — without
+    re-reading a whole component for every face of it.
+
+    Each scoped call decides the face's whole component, and before casting
+    its few rays it triangulates, packs and floods every face of it: a push
+    started on one of 100 selected faces of a 16 000-face group re-read the
+    group 100 times, ~0.2 s a face and 21 s for the click (0.6.3 modelling
+    test, 20-11). Those reads depend only on the mesh, so they are kept
+    between the calls for as long as no call has turned a face; the first
+    turn throws them away, and the next call reads the mesh afresh, as the
+    loop did. What each call asks with its own face — the sample of a
+    shell, the rays and their random draws — is asked again every time."""
+    ctx: dict = {}
+    flipped: list = []
+    for f in faces:
+        flipped.extend(orient_outward(mesh, seed, only=(f,), _ctx=ctx))
+    return flipped
+
+
+def orient_outward(mesh, seed: int = 12345, only=None, _ctx=None) -> list:
+    """Flip the faces of a closed solid so every boundary normal points
+    outward, and mark interior partitions (``face.interior``). Returns the
+    faces that were flipped.
+
+    No-op (returns ``[]``) on a mesh that isn't closed — an open sheet or flat
+    drawing has no outside, so there is nothing to orient.
+
+    Parity ray-casting only means anything against the *boundary* faces, but an
+    interior partition (the slab a Ctrl-push keeps, a wall two rooms share) is
+    not boundary — a ray crossing it would flip parity without leaving the
+    solid. So the partitions are peeled off iteratively: classify every face
+    against the current boundary set, drop the ones that read interior,
+    reclassify — to a fixpoint (typically 1 extra round; capped). Boundary
+    faces judged inward are then flipped; partitions keep their winding (no
+    winding of theirs is outward).
+
+    ``only`` (faces) restricts the pass to the edge-connected components those
+    faces belong to; every other face keeps its winding and its ``interior``
+    mark. Since orientation is decided per component anyway, an edit that
+    touched one solid has nothing to say about the others — and re-deciding
+    them costs the same as deciding the edit's own. A group holding many
+    welded bricks is the case that makes it matter: pushing one brick used to
+    re-run parity over all of them."""
+    if not mesh.faces:
+        return []
+    if _all_coplanar(mesh):
+        # A flat drawing has no volume at all: no partitions, nothing to flip.
+        for f in mesh.faces:
+            f.interior = False
+        return []
+    import numpy as np
+    # Scoped to some faces, only their components are read — triangulated,
+    # packed and labelled: the rest of the group never is (a push in a
+    # 9 674-face group of the Plaza packed all of it to decide ~320 faces,
+    # night of 19-11). Each face is judged against its own component, so
+    # their rows, and every verdict, are the same.
+    # ``_ctx`` (``orient_outward_each``): what a scoped call of one face
+    # reads of its component, kept from an earlier call on the same
+    # component while no face has been turned since. Pure functions of the
+    # mesh, so the call goes on exactly as if it had read them itself.
+    kept = None
+    if _ctx is not None and only is not None and len(only) == 1:
+        kept = _ctx.get(next(iter(only)))
+    if kept is not None:
+        return _orient_scoped(mesh, seed, only, _ctx, **kept)
+    comp_of = None
+    if only is not None:
+        comp_of = {}
+        _flood_components(only, set(mesh.faces), comp_of, 0)
+        if not comp_of:
+            return []
+    all_tris = _face_triangles(mesh, comp_of)
+    faces = list(all_tris)
+    fidx = {f: i for i, f in enumerate(faces)}
+    # Pack every triangle once; per-face queries exclude by mask instead of
+    # re-listing the other faces' triangles (the old O(F²·T) hot loop).
+    packed = _pack_lists([all_tris[f] for f in faces])
+    # Each face is judged against its own edge-connected component only (see
+    # :func:`_face_components`): slice the packed rows per component up front.
+    # A single-component mesh gets exactly one slice — the whole array — so
+    # drawn geometry behaves bit-identically to the unsliced pass.
+    if comp_of is None:
+        comp_of = _face_components(mesh)
+    comp_idx = np.asarray([comp_of[f] for f in faces], dtype=np.int64)
+    row_comp = (comp_idx[packed.face_idx] if len(packed.face_idx)
+                else np.zeros(0, dtype=np.int64))
+    comp_rows = {int(c): np.flatnonzero(row_comp == c)
+                 for c in np.unique(comp_idx)}
+    sub = {c: _PackedTris(packed.a[r], packed.e1[r], packed.e2[r],
+                          packed.face_idx[r])
+           for c, r in comp_rows.items()}
+
+    # Faces this call decides. Out-of-scope faces stay in ``boundary`` (so the
+    # in-scope components' masks are built the same way) but are never queried
+    # and never re-marked.
+    if only is None:
+        scope = list(mesh.faces)
+    else:
+        live_comps = {comp_of[f] for f in only if f in comp_of}
+        if not live_comps:
+            return []
+        scope = [f for f in mesh.faces if comp_of.get(f) in live_comps]
+
+    # Start with the likely partitions already peeled off: a face whose every
+    # edge is shared by three or more faces (a kept Ctrl-push base standing
+    # on its belt). Two such slabs in a row hide each other otherwise — a
+    # ray from one crosses the other, reads it as a wall of the solid, and
+    # neither is ever taken for interior; the second one was then flipped
+    # and the next push refused («rompería el sólido»). A face peeled here
+    # that is really boundary reads outward/inward in the first round and
+    # goes back, so the fixpoint below still has the last word.
+    touches_manifold = set()
+    edge_count: dict = {}
+    for e in mesh.edges:
+        for f in e.faces:
+            edge_count[f] = edge_count.get(f, 0) + 1
+            if len(e.faces) < 3:
+                touches_manifold.add(f)
+    in_scope = set(scope)
+    seeds = {f for f in in_scope
+             if f in all_tris and edge_count.get(f) and f not in touches_manifold}
+    boundary = {f: t for f, t in all_tris.items() if f not in seeds}
+    mesh_closed = is_closed(mesh)
+    shells = _coherent_shells(scope, comp_of) if scope else set()
+    read = dict(comp_of=comp_of, all_tris=all_tris, fidx=fidx,
+                packed=packed, comp_rows=comp_rows, sub=sub, scope=scope,
+                boundary=boundary, mesh_closed=mesh_closed, shells=shells)
+    if _ctx is not None and only is not None and len(only) == 1:
+        for f in comp_of:
+            _ctx[f] = read
+    return _orient_scoped(mesh, seed, only, _ctx, **read)
+
+
+def _orient_scoped(mesh, seed, only, _ctx, comp_of, all_tris, fidx, packed,
+                   comp_rows, sub, scope, boundary, mesh_closed,
+                   shells) -> list:
+    """The deciding half of :func:`orient_outward`, from what it read of
+    the mesh. ``_ctx`` is emptied as soon as a face is turned: what was
+    read no longer holds."""
+    import numpy as np
+
+    def _boundary_base(boundary_set):
+        # ONE isin per round — rebuilding the boundary-id array and running
+        # isin over every packed triangle PER FACE repeated identical work
+        # F times per round (imported brick barbecue: the push click hung
+        # for minutes at 195% CPU; SIGUSR1 autopsy pinned np.isin here).
+        ids = np.fromiter((fidx[f] for f in boundary_set), dtype=np.int64,
+                          count=len(boundary_set))
+        base = np.isin(packed.face_idx, ids)
+        return {c: base[r] for c, r in comp_rows.items()}
+
+    probes: dict = {}
+
+    # A closed skin wound one way is decided by a few of its faces, not by
+    # every one: its faces can only all look out or all look in, so the
+    # rays of six agree with the rays of two thousand. One that the sample
+    # does not read plainly (a skin crossing itself, a tied vote) goes
+    # through the full pass below, as every other component does.
+    shell_flips: list = []
+    if shells:
+        by_comp: dict = {}
+        for f in scope:
+            if comp_of[f] in shells:
+                by_comp.setdefault(comp_of[f], []).append(f)
+        asked_first = set(only) if only is not None else set()
+        all_true = {c: np.ones(len(comp_rows[c]), dtype=bool) for c in by_comp}
+        decided = set()
+        for c, members in by_comp.items():
+            verdict = _shell_verdict(
+                members, asked_first, boundary, seed, sub[c], all_true[c],
+                fidx, probes, all_tris)
+            if verdict is None:
+                continue
+            decided.add(c)
+            for f in members:
+                f.interior = False
+            # Only a closed mesh, or a pass scoped to an edit's own solids,
+            # turns faces (see the full pass below).
+            if verdict == "inward" and (mesh_closed or only is not None):
+                shell_flips.extend(members)
+        if decided:
+            scope = [f for f in scope if comp_of[f] not in decided]
+            if shell_flips and _ctx is not None:
+                _ctx.clear()
+            for f in shell_flips:
+                turn_face_over(f)
+            if not scope:
+                return shell_flips
+
+    for _ in range(4):
+        rng = random.Random(seed)
+        base_by_comp = _boundary_base(set(boundary))
+        interior_now = set()
+        for f in scope:
+            c = comp_of[f]
+            sp = sub[c]
+            state = _face_side_state(
+                f, boundary, rng, packed=sp, mask=base_by_comp[c],
+                skip=fidx[f], probes=probes, all_tris=all_tris)
+            if state == "interior":
+                interior_now.add(f)
+        # An edge only two faces share is a seam of one surface: both are
+        # boundary or both are partition. A partition beside a boundary face
+        # there would leave the boundary with a crack, so a parity misread
+        # (a ray grazing a busy corner elsewhere) gives way to the topology.
+        # A wall left marked interior this way hid the material behind it
+        # from every later push, which then refused.
+        changed = True
+        while changed and interior_now:
+            changed = False
+            for e in mesh.edges:
+                if len(e.faces) != 2:
+                    continue
+                a, b = e.faces
+                if (a in interior_now) != (b in interior_now):
+                    interior_now.discard(a)
+                    interior_now.discard(b)
+                    changed = True
+        if interior_now == {f for f in scope if f not in boundary}:
+            break
+        boundary = {f: t for f, t in all_tris.items() if f not in interior_now}
+    for f in scope:
+        f.interior = f not in boundary
+
+    # Flipping needs a real outside, which only a closed mesh has. The marks
+    # above are still computed for open meshes (a plan mixing raised rooms
+    # with flat floors is open as a whole, yet its interior walls are real
+    # partitions the volumetric queries must skip).
+    if not mesh_closed:
+        if only is None:
+            return shell_flips
+        # A scoped pass (an edit's own solids) judges closure per
+        # component: one open piece elsewhere in the mesh used to stop the
+        # pass for every solid, and a cube pushed beside a cube with a
+        # face deleted kept its base reversed (#230). An open component
+        # still has no outside, so its faces are never turned.
+        open_comps = {comp_of[f] for e in mesh.edges if len(e.faces) == 1
+                      for f in e.faces if f in comp_of}
+        scope = [f for f in scope if comp_of[f] not in open_comps]
+        if not scope:
+            return shell_flips
+    rng = random.Random(seed)
+    base_by_comp = _boundary_base(set(boundary))
+    to_flip = []
+    for f in scope:
+        if f not in boundary:
+            continue
+        c = comp_of[f]
+        sp = sub[c]
+        if _face_side_state(f, boundary, rng, packed=sp,
+                            mask=base_by_comp[c], skip=fidx[f],
+                            probes=probes, all_tris=all_tris) == "inward":
+            to_flip.append(f)
+    # Through an open mesh (the scoped path above) the flips are checked
+    # before they stay: a solid whose shared edges disagree MORE after the
+    # flips than before was misread by the parity rays, and keeps the
+    # windings it had. Measured on plaza.igz: of five solids this path
+    # would turn, four came out more consistent and one — a 51-face solid
+    # consistent to begin with — would have lost 52 edges (#230).
+    saved = {}
+    before_bad = {}
+    if not mesh_closed and to_flip:
+        import copy
+        for f in to_flip:
+            saved[f] = (copy.deepcopy(f.attrs), list(f.loop),
+                        [list(h) for h in f.hole_loops])
+        members: dict = {}
+        flip_comps = {comp_of[f] for f in to_flip}
+        for f in scope:
+            if comp_of[f] in flip_comps:
+                members.setdefault(comp_of[f], []).append(f)
+        before_bad = {c: _incoherent_edges(fs) for c, fs in members.items()}
+    if to_flip and _ctx is not None:
+        _ctx.clear()
+    for f in to_flip:
+        # Flip in place: reversing the loops reverses the winding (so the normal
+        # flips) while keeping the *same* Face object and its shared edges/
+        # incidence. Identity is preserved — a freshly extruded box keeps its
+        # base face object, and snapshot undo stays valid. Each geometric
+        # side keeps its own paint (``turn_face_over``): this pass corrects
+        # windings, it must not move a brick texture indoors.
+        turn_face_over(f)
+    if before_bad:
+        worse = {c for c, fs in members.items()
+                 if _incoherent_edges(fs) > before_bad[c]}
+        if worse:
+            for f in to_flip:
+                if comp_of[f] in worse:
+                    attrs, loop, holes = saved[f]
+                    f.attrs = attrs
+                    f.loop[:] = loop
+                    for h, old in zip(f.hole_loops, holes):
+                        h[:] = old
+            to_flip = [f for f in to_flip if comp_of[f] not in worse]
+    return shell_flips + to_flip
+
+
+def _shell_verdict(members, asked_first, boundary, seed, packed, mask,
+                   fidx, probes, all_tris) -> Optional[str]:
+    """``"outward"`` or ``"inward"`` for a closed skin wound one way (see
+    :func:`_coherent_shells`), read from a few of its faces: the ones the
+    edit named and others spread over the skin. ``None`` unless every one
+    of them says the same — then the skin is not what it looks like, and
+    the pass that asks every face decides."""
+    # A skin that really closes has area vectors that add up to nothing.
+    # One that only counts as closed edge by edge — an opening reaching
+    # past its own face, left mid-way by an edit — does not, and is not
+    # taken at anybody's word.
+    import numpy as np
+    areas = np.cross(packed.e1, packed.e2)
+    total = float(np.linalg.norm(areas, axis=1).sum())
+    if total <= 0.0 or float(np.linalg.norm(areas.sum(axis=0))) > 1e-5 * total:
+        return None
+    sample = [f for f in members if f in asked_first][:_SHELL_SAMPLES // 2]
+    step = max(1, len(members) // _SHELL_SAMPLES)
+    for f in members[::step]:
+        if len(sample) >= _SHELL_SAMPLES:
+            break
+        if f not in sample:
+            sample.append(f)
+    rng = random.Random(seed)
+    verdict = None
+    for f in sample:
+        state = _face_side_state(f, boundary, rng, packed=packed, mask=mask,
+                                 skip=fidx[f], probes=probes,
+                                 all_tris=all_tris)
+        if state not in ("outward", "inward"):
+            return None
+        if verdict is None:
+            verdict = state
+        elif state != verdict:
+            return None
+    return verdict
+
+
+def _incoherent_edges(faces) -> int:
+    """How many edges two of ``faces`` both walk in the same direction. In
+    a consistently wound solid every shared edge is walked once each way,
+    so this counts the disagreements, independently of any ray."""
+    uses: dict = {}
+    for f in faces:
+        for loop in (f.loop, *f.hole_loops):
+            n = len(loop)
+            for i in range(n):
+                a, b = loop[i], loop[(i + 1) % n]
+                uses.setdefault(frozenset((id(a), id(b))), []).append(
+                    (id(a), id(b)))
+    return sum(1 for u in uses.values() if len(u) == 2 and u[0] == u[1])

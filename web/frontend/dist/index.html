@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>IngeTrazo</title>
+    <link rel="icon" href="data:,">
+    <script type="module" crossorigin src="/assets/index-Cm3vYt-D.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/three-CytDbxCR.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-DChd60Hl.css">
+  </head>
+  <body>
+    <div id="app-chrome">
+      <nav id="menubar" class="menubar" aria-label="Menu"></nav>
+      <div id="toolbars" class="toolbars" role="toolbar" aria-label="Tools"></div>
+    </div>
+    <input id="file" class="visually-hidden" type="file" accept=".igz,application/json" tabindex="-1">
+    <main>
+      <div id="toolbars-left" class="toolbars-left" role="toolbar" aria-label="Drawing tools" aria-orientation="vertical"></div>
+      <section id="viewport" class="viewport" aria-label="3D model preview">
+        <canvas id="viewer"></canvas>
+        <nav class="view-tools legacy-controls" aria-label="Legacy view controls" hidden>
+          <button id="fit" title="Fit model to window">Fit</button>
+          <button data-view="iso">Iso</button>
+          <button data-view="top">Top</button>
+          <button data-view="front">Front</button>
+          <button data-view="right">Right</button>
+          <button id="projection" title="Change camera projection">Perspective</button>
+          <button id="measure" title="Measure between two model points">Measure</button>
+          <button id="sketch-line" title="Create a snapped line from two canvas points">Sketch line</button>
+        </nav>
+        <div class="display-tools">
+          <label><input id="edges" type="checkbox" checked> Edges</label>
+          <label><input id="grid" type="checkbox" checked> Grid</label>
+          <label><input id="axes" type="checkbox" checked> Axes</label>
+        </div>
+        <div id="progress" class="progress" hidden><span></span></div>
+        <p id="empty">Choose an IngeTrazo document to generate a GLB preview.</p>
+      </section>
+      <aside>
+        <section id="tool-panel" class="inspector tool-panel" hidden aria-live="polite">
+          <h2></h2>
+          <div class="tool-form"></div>
+        </section>
+        <h2>Document</h2>
+        <p id="status" role="status">No document loaded.</p>
+        <button id="cancel-operation" class="secondary-button" hidden>Cancel operation</button>
+        <button id="save" class="secondary-button" disabled>Save to library</button>
+        <button id="save-presentation-revision" class="secondary-button" hidden disabled>Save presentation changes</button>
+        <div id="history-actions" class="material-actions" hidden>
+          <button id="undo-revision" type="button" class="secondary-button" disabled>Undo</button>
+          <button id="redo-revision" type="button" class="secondary-button" disabled>Redo</button>
+        </div>
+        <form id="restore-revision" class="revision-restore" hidden>
+          <label>Restore
+            <select aria-label="Revision to restore"></select>
+          </label>
+          <button type="submit" class="secondary-button">Restore as new revision</button>
+        </form>
+        <details id="create-tools" class="create-tools" hidden>
+          <summary>Create geometry</summary>
+        <form id="create-box" class="create-box">
+          <p>Create solid box</p>
+          <label>Name <input name="name" type="text" value="Box" maxlength="255"></label>
+          <span>Size</span>
+          <div class="move-fields">
+            <label>Width <input name="width" type="number" value="1" min="0" step="any"></label>
+            <label>Depth <input name="depth" type="number" value="1" min="0" step="any"></label>
+            <label>Height <input name="height" type="number" value="1" min="0" step="any"></label>
+          </div>
+          <span>Origin</span>
+          <div class="move-fields">
+            <label>X <input name="x" type="number" value="0" step="any"></label>
+            <label>Y <input name="y" type="number" value="0" step="any"></label>
+            <label>Z <input name="z" type="number" value="0" step="any"></label>
+          </div>
+          <button type="submit" class="secondary-button">Create box</button>
+        </form>
+        <form id="create-line" class="create-box">
+          <p>Create line</p>
+          <label>Name <input name="name" type="text" value="Line" maxlength="255"></label>
+          <span>Start</span>
+          <div class="move-fields">
+            <label>X <input name="x" type="number" value="0" step="any"></label>
+            <label>Y <input name="y" type="number" value="0" step="any"></label>
+            <label>Z <input name="z" type="number" value="0" step="any"></label>
+          </div>
+          <span>End</span>
+          <div class="move-fields">
+            <label>X <input name="ex" type="number" value="1" step="any"></label>
+            <label>Y <input name="ey" type="number" value="0" step="any"></label>
+            <label>Z <input name="ez" type="number" value="0" step="any"></label>
+          </div>
+          <button type="submit" class="secondary-button">Create line</button>
+        </form>
+        <form id="create-rectangle" class="create-box">
+          <p>Create rectangle</p>
+          <label>Name <input name="name" type="text" value="Rectangle" maxlength="255"></label>
+          <label>Plane
+            <select name="plane"><option value="xy">XY</option><option value="xz">XZ</option><option value="yz">YZ</option></select>
+          </label>
+          <div class="move-fields">
+            <label>Width <input name="width" type="number" value="1" min="0" step="any"></label>
+            <label>Depth <input name="depth" type="number" value="1" min="0" step="any"></label>
+            <span></span>
+          </div>
+          <div class="move-fields">
+            <label>X <input name="x" type="number" value="0" step="any"></label>
+            <label>Y <input name="y" type="number" value="0" step="any"></label>
+            <label>Z <input name="z" type="number" value="0" step="any"></label>
+          </div>
+          <button type="submit" class="secondary-button">Create rectangle</button>
+        </form>
+        <form id="create-circle" class="create-box">
+          <p>Create circle</p>
+          <label>Name <input name="name" type="text" value="Circle" maxlength="255"></label>
+          <label>Plane
+            <select name="plane"><option value="xy">XY</option><option value="xz">XZ</option><option value="yz">YZ</option></select>
+          </label>
+          <div class="move-fields">
+            <label>Radius <input name="radius" type="number" value="1" min="0" step="any"></label>
+            <label>Segments <input name="segments" type="number" value="24" min="3" max="256" step="1"></label>
+            <span></span>
+          </div>
+          <div class="move-fields">
+            <label>X <input name="x" type="number" value="0" step="any"></label>
+            <label>Y <input name="y" type="number" value="0" step="any"></label>
+            <label>Z <input name="z" type="number" value="0" step="any"></label>
+          </div>
+          <button type="submit" class="secondary-button">Create circle</button>
+        </form>
+        <form id="create-arc" class="create-box">
+          <p>Create arc</p>
+          <label>Name <input name="name" type="text" value="Arc" maxlength="255"></label>
+          <label>Plane
+            <select name="plane"><option value="xy">XY</option><option value="xz">XZ</option><option value="yz">YZ</option></select>
+          </label>
+          <div class="move-fields">
+            <label>Radius <input name="radius" type="number" value="1" min="0" step="any"></label>
+            <label>Start ° <input name="start_degrees" type="number" value="0" step="any"></label>
+            <label>Sweep ° <input name="sweep_degrees" type="number" value="90" min="-359.999" max="359.999" step="any"></label>
+          </div>
+          <div class="move-fields">
+            <label>Segments <input name="segments" type="number" value="12" min="2" max="256" step="1"></label>
+            <span></span><span></span>
+          </div>
+          <span>Centre</span>
+          <div class="move-fields">
+            <label>X <input name="x" type="number" value="0" step="any"></label>
+            <label>Y <input name="y" type="number" value="0" step="any"></label>
+            <label>Z <input name="z" type="number" value="0" step="any"></label>
+          </div>
+          <button type="submit" class="secondary-button">Create arc</button>
+        </form>
+        <form id="create-dimension" class="create-box">
+          <p>Create dimension</p>
+          <span>Endpoints A / B</span>
+          <div class="move-fields">
+            <label>AX <input name="ax" type="number" value="0" step="any"></label>
+            <label>AY <input name="ay" type="number" value="0" step="any"></label>
+            <label>AZ <input name="az" type="number" value="0" step="any"></label>
+            <label>BX <input name="bx" type="number" value="1" step="any"></label>
+            <label>BY <input name="by" type="number" value="0" step="any"></label>
+            <label>BZ <input name="bz" type="number" value="0" step="any"></label>
+          </div>
+          <span>Dimension-line offset</span>
+          <div class="move-fields">
+            <label>X <input name="ox" type="number" value="0" step="any"></label>
+            <label>Y <input name="oy" type="number" value="0.25" step="any"></label>
+            <label>Z <input name="oz" type="number" value="0" step="any"></label>
+          </div>
+          <label>Type
+            <select name="axis"><option value="">Aligned</option><option value="x">Linear X</option><option value="y">Linear Y</option><option value="z">Linear Z</option></select>
+          </label>
+          <label>Custom text <input name="text" type="text" maxlength="1000" placeholder="Use &lt;&gt; for measured value"></label>
+          <button type="submit" class="secondary-button">Create dimension</button>
+        </form>
+        <form id="create-text" class="create-box">
+          <p>Create leader text</p>
+          <label>Text <input name="text" type="text" value="Note" maxlength="4000"></label>
+          <span>Anchor / label offset</span>
+          <div class="move-fields">
+            <label>X <input name="x" type="number" value="0" step="any"></label>
+            <label>Y <input name="y" type="number" value="0" step="any"></label>
+            <label>Z <input name="z" type="number" value="0" step="any"></label>
+            <label>ΔX <input name="ox" type="number" value="0.25" step="any"></label>
+            <label>ΔY <input name="oy" type="number" value="0.25" step="any"></label>
+            <label>ΔZ <input name="oz" type="number" value="0" step="any"></label>
+          </div>
+          <button type="submit" class="secondary-button">Create text</button>
+        </form>
+        <form id="create-guide" class="create-box">
+          <p>Create guide</p>
+          <label>Type
+            <select name="kind"><option value="guide-line">Infinite line</option><option value="guide-point">Point</option></select>
+          </label>
+          <span>Point / direction</span>
+          <div class="move-fields">
+            <label>X <input name="x" type="number" value="0" step="any"></label>
+            <label>Y <input name="y" type="number" value="0" step="any"></label>
+            <label>Z <input name="z" type="number" value="0" step="any"></label>
+            <label>DX <input name="dx" type="number" value="1" step="any"></label>
+            <label>DY <input name="dy" type="number" value="0" step="any"></label>
+            <label>DZ <input name="dz" type="number" value="0" step="any"></label>
+          </div>
+          <button type="submit" class="secondary-button">Create guide</button>
+        </form>
+        </details>
+        <dl id="summary"></dl>
+        <section id="selection-panel" class="inspector" hidden>
+          <div class="section-heading">
+            <h2>Selection</h2>
+            <button id="clear-selection" title="Clear selection">×</button>
+          </div>
+          <dl id="selection"></dl>
+          <form id="move-object" class="move-object" hidden>
+            <p>Move selected object</p>
+            <div class="move-fields">
+              <label>X <input name="x" type="number" value="0" step="any"></label>
+              <label>Y <input name="y" type="number" value="0" step="any"></label>
+              <label>Z <input name="z" type="number" value="0" step="any"></label>
+            </div>
+            <button type="submit" class="secondary-button">Move</button>
+          </form>
+          <form id="rotate-object" class="object-transform" hidden>
+            <p>Rotate about object centre</p>
+            <div class="rotate-fields">
+              <label>Axis
+                <select name="axis"><option value="x">X</option><option value="y">Y</option><option value="z" selected>Z</option></select>
+              </label>
+              <label>Degrees <input name="degrees" type="number" value="0" step="any"></label>
+            </div>
+            <button type="submit" class="secondary-button">Rotate</button>
+          </form>
+          <form id="scale-object" class="object-transform" hidden>
+            <p>Scale about object centre</p>
+            <div class="move-fields">
+              <label>X <input name="x" type="number" value="1" step="any"></label>
+              <label>Y <input name="y" type="number" value="1" step="any"></label>
+              <label>Z <input name="z" type="number" value="1" step="any"></label>
+            </div>
+            <button type="submit" class="secondary-button">Scale</button>
+          </form>
+          <form id="push-pull-object" class="object-transform" hidden>
+            <p>Push / pull face</p>
+            <div class="rotate-fields">
+              <label>Face
+                <select name="direction">
+                  <option value="normal">Only face normal</option>
+                  <option value="+x">+X</option><option value="-x">−X</option>
+                  <option value="+y">+Y</option><option value="-y">−Y</option>
+                  <option value="+z" selected>+Z</option><option value="-z">−Z</option>
+                </select>
+              </label>
+              <label>Distance <input name="distance" type="number" value="0" step="any"></label>
+            </div>
+            <label class="keep-base"><input name="keep_base" type="checkbox"> Keep base (stack)</label>
+            <button type="submit" class="secondary-button">Push / pull</button>
+          </form>
+          <form id="offset-face" class="object-transform" hidden>
+            <p>Offset planar face</p>
+            <label>Distance <input name="distance" type="number" value="0" step="any"></label>
+            <small>Positive offsets inward; negative offsets outward.</small>
+            <button type="submit" class="secondary-button">Offset face</button>
+          </form>
+          <form id="object-material" class="object-transform" hidden>
+            <p>Object material</p>
+            <div class="rotate-fields">
+              <label>Colour <input name="color" type="color" value="#d8cbb0"></label>
+              <label>Opacity <input name="opacity" type="number" value="1" min="0" max="1" step="0.05"></label>
+            </div>
+            <div class="material-actions">
+              <button type="submit" class="secondary-button">Apply material</button>
+              <button id="clear-object-material" type="button" class="secondary-button">Clear material</button>
+            </div>
+          </form>
+          <form id="object-ifc" class="object-transform" hidden>
+            <p>BIM / IFC classification</p>
+            <label>Class
+              <select name="class">
+                <option>IfcWall</option><option>IfcSlab</option><option>IfcColumn</option>
+                <option>IfcBeam</option><option>IfcFooting</option><option>IfcRoof</option>
+                <option>IfcStair</option><option>IfcRamp</option><option>IfcDoor</option>
+                <option>IfcWindow</option><option>IfcRailing</option><option>IfcCovering</option>
+                <option>IfcPile</option><option>IfcMember</option><option>IfcSpace</option>
+              </select>
+            </label>
+            <label>Name <input name="name" type="text" maxlength="255" placeholder="Wall axis A"></label>
+            <div class="material-actions">
+              <button type="submit" class="secondary-button">Classify</button>
+              <button id="clear-object-ifc" type="button" class="secondary-button">Unclassify</button>
+            </div>
+          </form>
+          <div id="object-lifecycle" class="object-lifecycle" hidden>
+            <label>Name <input id="object-name" type="text" maxlength="255"></label>
+            <button id="rename-object" type="button" class="secondary-button">Rename object</button>
+            <button id="duplicate-object" type="button" class="secondary-button">Duplicate using move offset</button>
+            <button id="copy-object" type="button" class="secondary-button">Copy</button>
+            <button id="paste-object" type="button" class="secondary-button" disabled>Paste using move offset</button>
+            <button id="delete-object" type="button" class="secondary-button danger-button">Delete object</button>
+          </div>
+        </section>
+        <section id="bim-panel" class="inspector" hidden>
+          <h2>BIM quantities</h2>
+          <div id="bim-objects" class="bim-objects"></div>
+          <div class="bim-exports">
+            <a id="export-quantities" class="secondary-button" download>Export quantities CSV</a>
+            <a id="export-ifc" class="secondary-button" download>Export IFC4</a>
+          </div>
+        </section>
+        <section id="geospatial-panel" class="inspector" hidden>
+          <h2>Geospatial</h2>
+          <p id="georef-summary" class="muted"></p>
+          <form id="set-georef" class="create-box">
+            <p>Scene datum (WGS84)</p>
+            <div class="move-fields">
+              <label>Latitude <input name="latitude" type="number" value="0" min="-90" max="90" step="any"></label>
+              <label>Longitude <input name="longitude" type="number" value="0" min="-180" max="180" step="any"></label>
+              <label>Altitude m <input name="altitude" type="number" value="0" step="any"></label>
+            </div>
+            <label>True north clockwise from +Y <input name="north" type="number" value="0" step="any"></label>
+            <button type="submit" class="secondary-button">Save datum</button>
+          </form>
+          <form id="set-map" class="create-box">
+            <p>Licensed base map</p>
+            <label>Source
+              <select name="source"><option value="esri_imagery">Esri World Imagery</option><option value="osm">OpenStreetMap</option><option value="s2cloudless">Sentinel-2 cloudless</option></select>
+            </label>
+            <div class="move-fields">
+              <label>Zoom <input name="zoom" type="number" value="16" min="1" max="19" step="1"></label>
+              <label>Radius m <input name="radius" type="number" value="1200" min="10" max="100000" step="any"></label>
+              <label>Opacity <input name="opacity" type="number" value="0.85" min="0" max="1" step="0.05"></label>
+            </div>
+            <div class="material-actions">
+              <button type="submit" class="secondary-button">Save map</button>
+              <button id="clear-map" type="button" class="secondary-button">Remove map</button>
+            </div>
+          </form>
+          <form id="import-terrain" class="create-box">
+            <p>Import surveyed terrain grid</p>
+            <label>Columns <input name="columns" type="number" value="3" min="2" max="100" step="1"></label>
+            <label>Local X,Y,Z — row-major
+              <textarea name="text" rows="5" placeholder="0,20,0.4&#10;10,20,0.8&#10;20,20,0.5&#10;0,10,0.1&#10;10,10,0.4&#10;20,10,0.2"></textarea>
+            </label>
+            <button type="submit" class="secondary-button">Import terrain</button>
+          </form>
+          <form id="import-survey" class="create-box">
+            <p>Import survey points</p>
+            <div class="rotate-fields">
+              <label>UTM zone <input name="zone" type="number" value="18" min="1" max="60" step="1"></label>
+              <label>Hemisphere
+                <select name="hemisphere"><option value="S">South</option><option value="N">North</option></select>
+              </label>
+            </div>
+            <label>P,N,E,Z,description
+              <textarea name="text" rows="4" placeholder="P1,8278698,717623,1750,control point"></textarea>
+            </label>
+            <button type="submit" class="secondary-button">Import survey</button>
+          </form>
+          <form id="create-geopath" class="create-box">
+            <p>Create traced path</p>
+            <label>Name <input name="name" type="text" value="Site boundary" maxlength="255"></label>
+            <label>Local X,Y,Z — one point per line
+              <textarea name="points" rows="4" placeholder="0,0,0&#10;10,0,0&#10;10,8,0"></textarea>
+            </label>
+            <label class="keep-base"><input name="closed" type="checkbox"> Closed path</label>
+            <label>Surface
+              <select name="surface"><option value="">Line only</option><option value="flat">Flat surface</option><option value="draped">Draped terrain surface</option></select>
+            </label>
+            <button type="submit" class="secondary-button">Create path</button>
+          </form>
+        </section>
+        <section id="display-panel" class="inspector" hidden>
+          <h2>Display &amp; sun</h2>
+          <form id="set-style" class="create-box">
+            <label>Model style
+              <select name="name">
+                <option>Default</option><option>Architectural</option><option>Shaded</option>
+                <option>Hidden line</option><option>Monochrome</option><option>Wireframe</option>
+                <option>X-ray</option>
+              </select>
+            </label>
+            <button type="submit" class="secondary-button">Apply style</button>
+          </form>
+          <form id="set-shadows" class="create-box">
+            <label class="keep-base"><input name="enabled" type="checkbox"> Enable solar shadows</label>
+            <div class="move-fields">
+              <label>Month <input name="month" type="number" value="3" min="1" max="12" step="1"></label>
+              <label>Day <input name="day" type="number" value="21" min="1" max="31" step="1"></label>
+              <label>Darkness <input name="darkness" type="number" value="0.55" min="0" max="1" step="0.05"></label>
+            </div>
+            <div class="move-fields">
+              <label>Hour <input name="hour" type="number" value="12" min="0" max="23" step="1"></label>
+              <label>Minute <input name="minute" type="number" value="0" min="0" max="59" step="1"></label>
+              <label>UTC offset <input name="utc_offset" type="number" min="-14" max="14" step="1" placeholder="Auto"></label>
+            </div>
+            <p id="sun-summary" class="muted">Solar shadows are off.</p>
+            <button type="submit" class="secondary-button">Save sun study</button>
+          </form>
+        </section>
+        <section id="sheets-panel" class="inspector" hidden>
+          <h2>Sheets &amp; PDF</h2>
+          <form id="create-sheet" class="create-box">
+            <label>Name <input name="name" type="text" value="Ground plan" maxlength="255"></label>
+            <div class="move-fields">
+              <label>Paper
+                <select name="paper"><option>A4</option><option selected>A3</option><option>A2</option><option>A1</option><option>A0</option></select>
+              </label>
+              <label>Scale 1:<input name="scale" type="number" value="100" min="0.1" max="100000" step="any"></label>
+              <label>View
+                <select name="view"><option value="top">Top</option><option value="front">Front</option><option value="right">Right</option><option value="iso">Iso</option></select>
+              </label>
+            </div>
+            <label class="keep-base"><input name="landscape" type="checkbox" checked> Landscape</label>
+            <button type="submit" class="secondary-button">Create native sheet</button>
+          </form>
+          <div id="sheets" class="bim-objects"></div>
+        </section>
+        <section id="measurement-panel" class="inspector" hidden>
+          <div class="section-heading">
+            <h2>Measurement</h2>
+            <button id="clear-measurement" title="Clear measurement">×</button>
+          </div>
+          <p id="measurement" class="measurement-value"></p>
+        </section>
+        <section class="inspector">
+          <h2>Layers</h2>
+          <ul id="layers"></ul>
+        </section>
+        <section id="views-panel" class="inspector" hidden>
+          <h2>Scenes</h2>
+          <div id="views" class="saved-views"></div>
+        </section>
+        <section id="sections-panel" class="inspector" hidden>
+          <div class="section-heading">
+            <h2>Sections</h2>
+            <div class="section-toggles">
+              <label class="section-toggle"><input id="section-plane" type="checkbox"> Plane</label>
+              <label class="section-toggle"><input id="section-cut" type="checkbox"> Cut</label>
+            </div>
+          </div>
+          <div id="sections" class="section-planes"></div>
+        </section>
+        <section id="materials-panel" class="inspector"></section>
+        <section id="components-panel" class="inspector"></section>
+        <section id="parts-panel" class="inspector"></section>
+        <section id="outline-panel" class="inspector" hidden>
+          <h2>Objects</h2>
+          <p id="outline-note" class="muted" hidden></p>
+          <ul id="outline" class="outline"></ul>
+        </section>
+        <section class="library">
+          <div class="section-heading">
+            <h2>Recent documents</h2>
+            <button id="refresh" title="Refresh document list">↻</button>
+          </div>
+          <p id="library-empty" class="muted">No saved documents.</p>
+          <ul id="documents"></ul>
+        </section>
+      </aside>
+    </main>
+    <footer id="statusbar" class="statusbar">
+      <span id="tool-hint" class="tool-hint">Select tool. Click an object to inspect it.</span>
+      <span class="vcb"><button id="numeric-entry" type="button" class="link-button" hidden>Numeric form…</button><label for="vcb">Measurements</label><input id="vcb" type="text" autocomplete="off" spellcheck="false" aria-label="Measurements: type a value and press Enter"></span>
+    </footer>
+  </body>
+</html>

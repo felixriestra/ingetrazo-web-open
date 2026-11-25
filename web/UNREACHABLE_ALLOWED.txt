@@ -1,0 +1,13 @@
+# Engine modules that the web service cannot reach yet. What is left are the DEM and terrain
+# modules, HELD ON PURPOSE for two open items (terrain profiles on sheets, automatic online DEM
+# acquisition: docs/web-port-remaining-work.md). Remove them if those features are dropped.
+# The pruning plan (docs/web-pruning-plan.md) empties this file: delete an entry in the same
+# commit that deletes the code. tests/test_web_reachability.py fails for an unreachable module
+# that is NOT listed here (new dead code), and for a listed entry that no longer exists (stale).
+
+georef.dem
+georef.geotiff
+georef.profile
+georef.surface
+georef.terrain
+georef.tile_fetcher
