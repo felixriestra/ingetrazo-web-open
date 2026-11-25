@@ -200,6 +200,37 @@ These steps run IngeTrazo Web on your Mac. To serve other people from it, contin
 
 ## Install on Windows
 
+### With the install script
+
+[`install-windows.ps1`](install-windows.ps1) does all the steps below for you. Open
+**PowerShell** (no administrator rights needed) and run:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/felixriestra/ingetrazo-web-open/main/install-windows.ps1)))
+```
+
+Or download the file and run `powershell -ExecutionPolicy Bypass -File .\install-windows.ps1`.
+
+It installs Python 3.13 and Git with `winget` if they are missing, puts the program in
+`%LOCALAPPDATA%\IngeTrazoWeb` and your documents in `%USERPROFILE%\IngeTrazoWebData`, starts
+the server without a console window, and opens <http://127.0.0.1:8000>. It adds two entries to
+the Start menu (open IngeTrazo Web, start the server), and starts the server each time you sign in.
+The log is `server.log` in the documents folder.
+
+| Option | What it does |
+|---|---|
+| `-Port 8080` | Use another port |
+| `-Network` | Let other computers on the network in: creates an `admin` account and prints its access token once, and opens the port in Windows Firewall (when run as administrator) |
+| `-InstallDir`, `-DataDir` | Other folders for the program and the documents |
+| `-NoAutostart` | Do not start the server when you sign in |
+| `-Uninstall` | Remove the program, shortcuts and firewall rule; your documents stay (add `-RemoveData` to delete them too) |
+
+To pass options with the one-line command, add them at the end, for example
+`& ([scriptblock]::Create((irm https://...))) -Network`. **Update** by running the script
+again with the same options.
+
+### By hand
+
 1. **Install Python** from [python.org](https://www.python.org/downloads/windows/) (64-bit,
    3.10 to 3.14). In the first screen of the installer, tick **Add python.exe to PATH**.
 2. **Install Git** from [git-scm.com](https://git-scm.com/download/win) with the default
