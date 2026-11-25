@@ -75,8 +75,11 @@ def test_a_tampered_or_expired_cookie_is_refused(world):
     client.post("/api/v1/auth/login", json={"token": world.tokens["ana"]})
     good = client.cookies.get("ingetrazo_session")
     name, expiry, signature = good.split(".")
+    # Clear first: newer test clients keep the server's cookie beside one set by hand.
+    client.cookies.clear()
     client.cookies.set("ingetrazo_session", f"root.{expiry}.{signature}")
     assert client.get("/api/v1/documents").status_code == 401
+    client.cookies.clear()
     client.cookies.set("ingetrazo_session", f"ana.1.{signature}")
     assert client.get("/api/v1/documents").status_code == 401
 

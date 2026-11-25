@@ -109,6 +109,7 @@ They are listed in [`requirements.txt`](requirements.txt) (the engine) and
 | uvicorn[standard] | 0.34 to < 1 | BSD | Web server |
 | python-multipart | 0.0.20 to < 1 | Apache-2.0 | File uploads |
 | pytest | 8 or later | MIT | Running the test suite (not needed to run the server) |
+| httpx2, httpx | 2.0 / 0.27 or later | BSD | FastAPI's test client, for the tests only |
 
 The browser client bundles [Three.js](https://threejs.org/) 0.180 (MIT).
 
@@ -454,7 +455,7 @@ with and without it.
 **Run the tests** (about four minutes):
 
 ```bash
-pip install pytest
+pip install -r requirements.txt   # includes pytest and the test client
 python -m pytest -q
 python -m web.tools.reachability --check
 ```
