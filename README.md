@@ -317,6 +317,38 @@ again with the same options.
 
 ## Install on a Linux web server
 
+### With the install script
+
+[`install-linux.sh`](install-linux.sh) does all the steps below for you, on Ubuntu 22.04+,
+Debian 12+ or Fedora (apt or dnf). With your domain name already pointing to the server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/felixriestra/ingetrazo-web-open/main/install-linux.sh | sudo bash -s -- --domain ingetrazo.example.com
+```
+
+Or download the file and run `sudo bash install-linux.sh --domain ingetrazo.example.com`.
+
+It installs the system packages, creates the service user `ingetrazo`, puts the program in
+`/opt/ingetrazo/app` and the documents in `/opt/ingetrazo/data`, creates the administrator
+account `admin` and prints its access token once, and runs the systemd service
+`ingetrazo-web`, started at boot. With `--domain` it also installs [Caddy](https://caddyserver.com/)
+(from the distribution, or from Caddy's own repository) and serves the site over HTTPS with a
+free certificate. It opens the needed ports in ufw or firewalld when they are active.
+
+| Option | What it does |
+|---|---|
+| `--domain NAME` | Serve `https://NAME` through Caddy. Its `/etc/caddy/Caddyfile` is replaced only if it is the package's sample; otherwise the script prints the block to add |
+| *(no option)* | Listen on `127.0.0.1:8000` only; reach it with `ssh -L 8000:127.0.0.1:8000 your-server`, or put your own proxy in front |
+| `--network` | Plain HTTP on all addresses (tokens travel unencrypted; trusted networks only) |
+| `--port N`, `--admin-name NAME` | Another port; another name for the first administrator |
+| `--install-dir`, `--data-dir` | Other folders for the program and the documents |
+| `--no-service` | Install only, without systemd (for containers) |
+| `--uninstall` | Remove the service and the program; the documents and the user stay (add `--remove-data` to delete them too) |
+
+**Update** by running the script again with the same options.
+
+### By hand
+
 These steps are for Ubuntu or Debian. Other distributions need the same packages under
 their own names.
 
