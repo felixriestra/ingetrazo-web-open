@@ -6,7 +6,6 @@ browser may download). Raising reports the job as failed with the exception's me
 """
 from __future__ import annotations
 
-import resource
 import sys
 import traceback
 from pathlib import Path
@@ -55,6 +54,7 @@ def _limit_memory() -> None:
     import os
     limit = int(os.environ.get("INGETRAZO_WEB_JOB_MEMORY_MIB", "4096")) * 1024 * 1024
     if sys.platform.startswith("linux") and limit > 0:
+        import resource            # Unix only: importing it at the top broke every job on Windows
         try:
             resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
         except (ValueError, OSError):
