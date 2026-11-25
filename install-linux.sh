@@ -102,8 +102,13 @@ VENV_PYTHON="$APP_DIR/.venv/bin/python"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 systemd_running() { [ -d /run/systemd/system ]; }
-# Run a command as the service user, with its own home (pip and git keep their files there).
-as_service() { runuser -u "$SERVICE_USER" -- env HOME="$INSTALL_DIR" "$@"; }
+# Run a command as the service user in a clean environment with its own home, so nothing
+# of the person running sudo (XDG_CONFIG_HOME, PIP_*, ...) leaks in; pip and git keep their
+# files in that home.
+as_service() {
+    runuser -u "$SERVICE_USER" -- env -i HOME="$INSTALL_DIR" LANG=C.UTF-8 \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$@"
+}
 
 ufw_active() { have ufw && ufw status 2>/dev/null | grep -q '^Status: active'; }
 firewalld_active() { have firewall-cmd && firewall-cmd --state >/dev/null 2>&1; }

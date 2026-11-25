@@ -27,6 +27,9 @@ jobs:
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash               # -eo pipefail, so "| tee" does not hide a failed install
     steps:
       - uses: actions/checkout@v4
 
@@ -143,7 +146,7 @@ jobs:
             if ($status -in 'completed', 'failed') { break }
             Start-Sleep 1
           }
-          "import job: $status"
+          Invoke-RestMethod "http://127.0.0.1:8020/api/v1/jobs/$job" | ConvertTo-Json -Depth 5
           if ($status -ne 'completed') { throw "the import job ended as $status" }
 
       - name: Update, then uninstall
