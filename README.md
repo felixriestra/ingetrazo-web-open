@@ -127,6 +127,39 @@ The browser client bundles [Three.js](https://threejs.org/) 0.180 (MIT).
 These steps run IngeTrazo Web on your Mac. To serve other people from it, continue with
 [Let other people use it](#let-other-people-use-it-accounts-and-https).
 
+### With the install script
+
+[`install-macos.sh`](install-macos.sh) does all the steps below for you. Open **Terminal**
+and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/felixriestra/ingetrazo-web-open/main/install-macos.sh | bash
+```
+
+Or download the file and run `bash install-macos.sh`.
+
+It installs Python 3.13 and Git with Homebrew if they are missing (without Homebrew it opens
+the python.org page, or Apple's command line tools installer for Git, and asks you to run it
+again). It puts the program in `~/Library/Application Support/IngeTrazoWeb` and your documents
+in `~/IngeTrazoWebData`, runs the server in the background as a launchd agent
+(`com.ingetrazo.web`) that starts at login and restarts if it crashes, and opens
+<http://127.0.0.1:8000>. It also adds an **IngeTrazo Web** app to `/Applications` (or
+`~/Applications`) that starts the server if needed and opens it. The log is `server.log` in
+the documents folder.
+
+| Option | What it does |
+|---|---|
+| `--port 8080` | Use another port |
+| `--network` | Let other computers on the network in: creates an `admin` account and prints its access token once (macOS may ask whether Python may accept incoming connections) |
+| `--install-dir`, `--data-dir` | Other folders for the program and the documents |
+| `--no-autostart` | Do not start the server at login (the app still starts it) |
+| `--uninstall` | Remove the program, the agent and the app; your documents stay (add `--remove-data` to delete them too) |
+
+To pass options with the one-line command, use `| bash -s -- --network`. **Update** by running
+the script again with the same options.
+
+### By hand
+
 1. **Install Python and Git.** The simplest way is [Homebrew](https://brew.sh/): open
    **Terminal** and run
 
