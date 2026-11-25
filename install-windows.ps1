@@ -383,7 +383,7 @@ foreach ($attempt in 1..60) {
 if (-not $ready) {
     throw "The server did not start within a minute. See $(Join-Path $DataDir 'server.log')."
 }
-Start-Process "$Url/"
+if (-not $env:INGETRAZO_NO_BROWSER) { Start-Process "$Url/" }
 
 Write-Host ''
 Write-Host "IngeTrazo Web is running at $Url/" -ForegroundColor Green

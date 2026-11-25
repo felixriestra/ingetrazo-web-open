@@ -1,0 +1,161 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Run the install scripts on real machines: install, check the server answers (and runs an
+# import in its worker process), update, uninstall. Runs when a script or the requirements
+# change, and by hand from the Actions tab. The macOS script is tested by hand (macOS
+# runners cost ten times as much).
+name: install-scripts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - install-*.sh
+      - install-*.ps1
+      - requirements.txt
+      - web/backend/requirements.txt
+      - .github/workflows/install-scripts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.os }}, systemd and Caddy)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make this checkout the repository to install from
+        # The service user clones it, so it must be readable and trusted by that user.
+        run: |
+          sudo cp -a "$GITHUB_WORKSPACE" /srv/src
+          sudo chmod -R a+rX /srv/src
+          sudo git config --system --add safe.directory '*'
+
+      - name: Install
+        run: sudo bash install-linux.sh --repository file:///srv/src --branch "$GITHUB_REF_NAME" | tee install.log
+
+      - name: Check the service
+        run: |
+          systemctl is-enabled ingetrazo-web
+          curl -sf http://127.0.0.1:8000/api/v1/health
+          # Accounts are on: without the token, documents are refused.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/documents)" = 401
+          token=$(grep -A1 'Access token' install.log | tail -n 1 | sed 's/\x1b\[[0-9;]*m//g')
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" http://127.0.0.1:8000/api/v1/documents)" = 200
+          printf 'v 0 0 0\nv 1 0 0\nv 1 1 0\nf 1 2 3\n' > tri.obj
+          job=$(curl -sf -H "Authorization: Bearer $token" -F file=@tri.obj http://127.0.0.1:8000/api/v1/jobs/import | python3 -c 'import sys, json; print(json.load(sys.stdin)["id"])')
+          for i in $(seq 1 60); do
+            status=$(curl -sf -H "Authorization: Bearer $token" http://127.0.0.1:8000/api/v1/jobs/$job | python3 -c 'import sys, json; print(json.load(sys.stdin)["status"])')
+            [ "$status" = completed ] && break
+            [ "$status" = failed ] && exit 1
+            sleep 1
+          done
+          test "$status" = completed
+
+      - name: Update, served over HTTPS by Caddy
+        run: |
+          sudo bash install-linux.sh --repository file:///srv/src --branch "$GITHUB_REF_NAME" --domain localhost
+          for i in $(seq 1 30); do curl -skf https://localhost/api/v1/health && break; sleep 1; done
+          curl -skf https://localhost/api/v1/health
+
+      - name: Uninstall
+        run: |
+          sudo bash install-linux.sh --uninstall --remove-data
+          # ("! command" would not stop the step under set -e, hence the ifs.)
+          if systemctl cat ingetrazo-web >/dev/null 2>&1; then echo "the service is still there"; exit 1; fi
+          if id ingetrazo >/dev/null 2>&1; then echo "the user is still there"; exit 1; fi
+          if curl -sf http://127.0.0.1:8000/api/v1/health; then echo "the server still answers"; exit 1; fi
+
+      - name: Service log
+        if: failure()
+        run: sudo journalctl -u ingetrazo-web --no-pager | tail -n 100
+
+  container:
+    name: Linux (${{ matrix.image }}, no systemd)
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:12", "fedora:41"]
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Git, for the checkout
+        run: |
+          if command -v apt-get >/dev/null; then apt-get update -qq && apt-get install -y -qq git; else dnf install -y -q git; fi
+          git config --system --add safe.directory '*'
+
+      - uses: actions/checkout@v4
+
+      - name: Install
+        run: |
+          cp -a "$GITHUB_WORKSPACE" /srv/src && chmod -R a+rX /srv/src
+          bash install-linux.sh --no-service --repository file:///srv/src --branch "$GITHUB_REF_NAME"
+
+      - name: Run the server and check it
+        run: |
+          cd /opt/ingetrazo/app
+          runuser -u ingetrazo -- env HOME=/opt/ingetrazo INGETRAZO_WEB_DATA=/opt/ingetrazo/data \
+            QT_QPA_PLATFORM=offscreen .venv/bin/python -m web.backend > /tmp/server.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8000/api/v1/health && exit 0; sleep 1; done
+          cat /tmp/server.log
+          exit 1
+
+  windows:
+    name: Windows (PowerShell 5.1)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    env:
+      INGETRAZO_NO_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image's default Python is outside the 3.10 to 3.14 range on some images.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\install-windows.ps1 -Repository "$env:GITHUB_WORKSPACE" -Branch "$env:GITHUB_REF_NAME" -Port 8020
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Check the server
+        run: |
+          $ErrorActionPreference = 'Stop'
+          (Invoke-WebRequest http://127.0.0.1:8020/api/v1/health -UseBasicParsing).Content
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\IngeTrazo Web server.lnk")) { throw 'no sign-in shortcut' }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\IngeTrazo Web\IngeTrazo Web.url")) { throw 'no Start menu entry' }
+          Set-Content -Path tri.obj -Value "v 0 0 0`nv 1 0 0`nv 1 1 0`nf 1 2 3" -Encoding ascii
+          $job = (curl.exe -sf -F "file=@tri.obj" http://127.0.0.1:8020/api/v1/jobs/import | ConvertFrom-Json).id
+          foreach ($i in 1..60) {
+            $status = (Invoke-RestMethod "http://127.0.0.1:8020/api/v1/jobs/$job").status
+            if ($status -in 'completed', 'failed') { break }
+            Start-Sleep 1
+          }
+          "import job: $status"
+          if ($status -ne 'completed') { throw "the import job ended as $status" }
+
+      - name: Update, then uninstall
+        run: |
+          $ErrorActionPreference = 'Stop'
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\install-windows.ps1 -Repository "$env:GITHUB_WORKSPACE" -Branch "$env:GITHUB_REF_NAME" -Port 8020
+          if ($LASTEXITCODE -ne 0) { throw 'the update failed' }
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\install-windows.ps1 -Uninstall -Port 8020
+          if ($LASTEXITCODE -ne 0) { throw 'the uninstall failed' }
+          if (Test-Path "$env:LOCALAPPDATA\IngeTrazoWeb") { throw 'the program folder is still there' }
+          try { Invoke-WebRequest http://127.0.0.1:8020/api/v1/health -UseBasicParsing -TimeoutSec 3; throw 'the server still answers' } catch [System.Net.WebException] { 'server stopped' }
+
+      - name: Server log
+        if: failure()
+        run: Get-Content "$env:USERPROFILE\IngeTrazoWebData\server.log" -Tail 100 -ErrorAction SilentlyContinue
