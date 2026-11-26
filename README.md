@@ -480,7 +480,7 @@ Everything is set with environment variables. None is required.
 | `INGETRAZO_WEB_KEEP_REVISIONS` | `0` (keep all) | Keep only the newest N revisions of each document (at least 5; Undo always still works N-1 steps back) |
 | `INGETRAZO_WEB_EXTENSIONS` | `extensions` inside the data folder | Folder for server-side Python extensions |
 | `INGETRAZO_WEB_EXTENSION_TIMEOUT` | `60` | Seconds before an extension is stopped |
-| `INGETRAZO_RUST` | off | `1` uses the optional native engine when it is built (see below) |
+| `INGETRAZO_RUST` | off | `1` uses the optional native engine when it is built; most servers should leave it off (see [The native engine](#the-native-engine-rust-for-very-large-models)) |
 
 Uploads are limited to 100 MiB per file.
 
@@ -530,21 +530,60 @@ Extensions run with the server's rights, so only install code you trust.
 
 ### The native engine (Rust, for very large models)
 
-A native module from the desktop application speeds up hidden lines, orientation and
-push/pull on models with hundreds of thousands of faces. On ordinary models it makes no
-visible difference, so it is off. To build it, install Rust from <https://rustup.rs/>, then
-with the virtual environment active:
+A native module from the desktop application (`rust/ingetrazo_core`) speeds up hidden lines,
+face orientation, snapping and push/pull on very large models. It is **off by default, and
+most servers should leave it off**:
+
+- **No gain on ordinary models.** Measured on the web service, a 10,000-face preview and
+  5,000-box edits run no faster with it. The gains appear from about 100,000 faces, and
+  the desktop commands that profit most (Intersect Faces, the AI tools) are not in the web
+  edition.
+- **The same results everywhere.** Every edit is stored as a permanent revision, so the
+  same edit should give the same geometry on any server. The Python engine guarantees
+  that. The native one is meant to match it, but on Apple Silicon Macs its snap projection
+  is not bit-for-bit identical to Qt's.
+- **One tested path.** The automated tests and the install scripts use the Python engine.
+- **Nothing to compile.** The native engine needs the Rust toolchain (and, on Windows, the
+  Visual Studio C++ build tools); there is no ready-made package, and the install scripts
+  do not build it.
+
+**Turn it on** only if people regularly open models of 100,000 faces or more and run Orient
+Faces, hidden-line views or heavy snapping. Benchmark one of your real models with and
+without it first. If the module is missing or fails to load, the server quietly uses
+Python, so turning it on can never stop the server.
+
+1. Install Rust from <https://rustup.rs/>.
+2. Build the module into the program's virtual environment. For an install made with a
+   script, that is the `.venv` inside the program folder (`app/.venv`); on Linux, run the
+   commands as the `ingetrazo` user.
+
+   ```bash
+   source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+   pip install maturin
+   cd rust/ingetrazo_core
+   maturin develop --release
+   cd ../..
+   ```
+
+3. Start the server with `INGETRAZO_RUST=1`:
+
+   | How it runs | Where to set it |
+   |---|---|
+   | By hand | `INGETRAZO_RUST=1 python -m web.backend` (PowerShell: `$env:INGETRAZO_RUST = "1"` first) |
+   | Linux service | `sudo systemctl edit ingetrazo-web`, add `[Service]` and `Environment=INGETRAZO_RUST=1`, then `sudo systemctl restart ingetrazo-web`. This override survives updates |
+   | macOS agent | Add `<key>INGETRAZO_RUST</key><string>1</string>` to `EnvironmentVariables` in `~/Library/LaunchAgents/com.ingetrazo.web.plist`, then log out and in |
+   | Windows launcher | Add `os.environ['INGETRAZO_RUST'] = '1'` next to the other settings in `launch.pyw` in the program folder, then restart the server |
+
+   The install scripts rewrite the macOS agent and the Windows launcher when you update, so
+   set it again after an update there. An update also replaces the source, so rebuild the
+   module (step 2) after updating.
+
+To check which engine the server will use, run this from the program folder with the
+virtual environment active; it prints `Rust` or `Python`:
 
 ```bash
-pip install maturin
-cd rust/ingetrazo_core
-maturin develop --release
-cd ../..
-INGETRAZO_RUST=1 python -m web.backend
+INGETRAZO_RUST=1 python -c "import core._native as n; print(n.engine())"
 ```
-
-On Windows, set `$env:INGETRAZO_RUST = "1"` before starting the server. Results are the same
-with and without it.
 
 ## For developers
 
