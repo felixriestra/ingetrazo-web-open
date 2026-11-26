@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Run the install scripts on real machines: install, check the server answers (and runs an
 # import in its worker process), update, uninstall. Runs when a script or the requirements
-# change, and by hand from the Actions tab. The macOS script is tested by hand (macOS
-# runners cost ten times as much).
+# change, and by hand from the Actions tab. (Runners are free for public repositories; on a
+# private one the macOS job counts ten times its minutes.)
 name: install-scripts
 
 on:
@@ -111,6 +111,64 @@ jobs:
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8000/api/v1/health && exit 0; sleep 1; done
           cat /tmp/server.log
           exit 1
+
+  macos:
+    name: macOS (Apple Silicon, launchd)
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    env:
+      INGETRAZO_NO_BROWSER: "1"
+      URL: http://127.0.0.1:8021
+    steps:
+      - uses: actions/checkout@v4
+
+      # No setup-python: the script finds the Python the image has, as on a user's Mac.
+      - name: Install
+        run: bash install-macos.sh --repository "file://$GITHUB_WORKSPACE" --branch "$GITHUB_REF_NAME" --port 8021
+
+      - name: Check the agent, the app and an import
+        run: |
+          launchctl print "gui/$(id -u)/com.ingetrazo.web" | grep -E 'state|program'
+          test -d "/Applications/IngeTrazo Web.app"
+          curl -sf "$URL/api/v1/health"
+          printf 'v 0 0 0\nv 1 0 0\nv 1 1 0\nf 1 2 3\n' > tri.obj
+          job=$(curl -sf -F file=@tri.obj "$URL/api/v1/jobs/import" | python3 -c 'import sys, json; print(json.load(sys.stdin)["id"])')
+          for i in $(seq 1 60); do
+            status=$(curl -sf "$URL/api/v1/jobs/$job" | python3 -c 'import sys, json; print(json.load(sys.stdin)["status"])')
+            [ "$status" = completed ] && break
+            [ "$status" = failed ] && { curl -s "$URL/api/v1/jobs/$job"; exit 1; }
+            sleep 1
+          done
+          test "$status" = completed
+
+      - name: launchd restarts it after a crash
+        run: |
+          kill -9 "$(lsof -tnP -iTCP:8021 -sTCP:LISTEN)"
+          for i in $(seq 1 30); do sleep 1; curl -sf "$URL/api/v1/health" && exit 0; done
+          echo "the server did not come back"; exit 1
+
+      - name: Update with --network (accounts on)
+        run: |
+          bash install-macos.sh --repository "file://$GITHUB_WORKSPACE" --branch "$GITHUB_REF_NAME" --port 8021 --network | tee install.log
+          token=$(grep -A1 'Access token' install.log | tail -n 1 | sed 's/\x1b\[[0-9;]*m//g')
+          test -n "$token"
+          test "$(curl -s -o /dev/null -w '%{http_code}' "$URL/api/v1/documents")" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "$URL/api/v1/documents")" = 200
+
+      - name: Uninstall
+        run: |
+          bash install-macos.sh --uninstall --port 8021
+          if launchctl print "gui/$(id -u)/com.ingetrazo.web" >/dev/null 2>&1; then echo "the agent is still loaded"; exit 1; fi
+          if [ -e "/Applications/IngeTrazo Web.app" ]; then echo "the app is still there"; exit 1; fi
+          if [ -e "$HOME/Library/Application Support/IngeTrazoWeb" ]; then echo "the program is still there"; exit 1; fi
+          if curl -sf "$URL/api/v1/health"; then echo "the server still answers"; exit 1; fi
+          test -d "$HOME/IngeTrazoWebData"          # documents are kept
+
+      - name: Server log
+        if: failure()
+        run: tail -n 100 "$HOME/IngeTrazoWebData/server.log" || true
 
   windows:
     name: Windows (PowerShell 5.1)
