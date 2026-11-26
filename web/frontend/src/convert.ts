@@ -95,6 +95,17 @@ export function importModel(openDocument: (id: string) => Promise<void>): void {
   picker.click();
 }
 
+/** Start an empty document on the server (asking for its name) and open it. */
+export async function newDocument(openDocument: (id: string) => Promise<void>): Promise<void> {
+  const name = (await askText("New document", "Name:", "Untitled"))?.trim();
+  if (!name) return;
+  const response = await fetch("/api/v1/documents/blank", {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name}),
+  });
+  if (!response.ok) { notice("New document", (await responseApiError(response)).message); return; }
+  await openDocument((await response.json() as {id: string}).id);
+}
+
 /** Export the open revision: choose a format, wait for the job, then download. */
 export async function exportRevision(record: {id: string; latest_revision: number; name: string} | undefined): Promise<void> {
   if (!record) { notice("Export", "Open a stored document first."); return; }

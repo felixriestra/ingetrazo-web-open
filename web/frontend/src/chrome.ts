@@ -9,7 +9,7 @@
  */
 import manifest from "./ui/manifest.json";
 import type {Gestures} from "./gestures";
-import {importModel} from "./convert";
+import {importModel, newDocument} from "./convert";
 import {openPreferences} from "./preferences";
 import type {PreferencesTab} from "./preferences";
 import {askParameters, listExtensions} from "./extensions";
@@ -347,13 +347,15 @@ export function mountChrome(viewer: IngeTrazoViewer, forms: ToolForms, gestures:
     label, run: () => clickLegacy(selector), checked: () => $<HTMLInputElement>(selector).checked,
   });
   const extensionItems: Item[] = [{label: "Loading extensions…"}];
+  const openStored = async (id: string) => { document.dispatchEvent(new CustomEvent("ingetrazo:open-document", {detail: id})); };
   const menus: {title: string; items: Item[]}[] = [
     {title: "File", items: [
+      {label: "New…", run: () => void newDocument(openStored)},
       {label: "Open…", run: () => clickLegacy("#file")},
       legacy("Save to library", "#save"),
       sep,
-      {label: "Import model (OBJ, STL, DAE, DXF, GLB, SKP)…", run: () => importModel(async id => { document.dispatchEvent(new CustomEvent("ingetrazo:open-document", {detail: id})); })},
-      {label: "Export revision (GLB, OBJ, STL, DAE, DXF, IFC)…", run: () => document.dispatchEvent(new CustomEvent("ingetrazo:export"))},
+      {label: "Import model (OBJ, STL, DAE, DXF, GLB, SKP)…", run: () => importModel(openStored)},
+      {label: "Export revision (GLB, OBJ, STL, DAE, DXF, SVG, IFC)…", run: () => document.dispatchEvent(new CustomEvent("ingetrazo:export"))},
       sep,
       legacy("Export quantities (CSV)", "#export-quantities"),
       sep,

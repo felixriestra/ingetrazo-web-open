@@ -2168,7 +2168,7 @@ document.addEventListener("ingetrazo:run-extension", event => {
 document.addEventListener("ingetrazo:open-document", async event => {
   const id = (event as CustomEvent<string>).detail;
   const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}`);
-  if (!response.ok) { status.textContent = "The imported document could not be opened."; return; }
+  if (!response.ok) { status.textContent = "The document could not be opened."; return; }
   const record = await response.json() as DocumentRecord;
   await refreshLibrary();
   await loadStored(record);
