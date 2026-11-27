@@ -991,8 +991,23 @@ def create_app(data_root: str | Path | None = None) -> FastAPI:
         return response
 
     if _FRONTEND.is_dir():
-        app.mount("/", StaticFiles(directory=_FRONTEND, html=True), name="frontend")
+        app.mount("/", _ClientFiles(directory=_FRONTEND, html=True), name="frontend")
     return app
+
+
+class _ClientFiles(StaticFiles):
+    """The browser client. The built files under ``assets/`` carry a hash of their
+    contents in their names, so a browser may keep them for good; everything else
+    (``index.html`` above all, which names those files) is checked with the server
+    on every load, so an updated server never runs with the old client."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code in (200, 304):
+            hashed = path.startswith("assets/") and _FRONTEND.name == "dist"
+            response.headers["Cache-Control"] = ("public, max-age=31536000, immutable"
+                                                 if hashed else "no-cache")
+        return response
 
 
 class _TemporaryDirectoryCleanup:
