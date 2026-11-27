@@ -1,9 +1,9 @@
 """FastAPI adapter for the first IngeTrazo web vertical slice."""
 from __future__ import annotations
 
-import base64
 import json
 import os
+import struct
 import tempfile
 import time
 import math
@@ -977,12 +977,12 @@ def create_app(data_root: str | Path | None = None) -> FastAPI:
             if isinstance(exc, HTTPException):
                 raise
             raise _document_error(exc) from exc
+        # The summary rides inside the GLB (its top-level extras), not in a header:
+        # a model with many saved views makes it far larger than browsers accept
+        # for headers (Chrome: ERR_RESPONSE_HEADERS_TOO_BIG).
+        _embed_summary(target, summary)
         response = FileResponse(target, media_type="model/gltf-binary",
                                 filename="preview.glb")
-        encoded_summary = base64.urlsafe_b64encode(
-            json.dumps(summary, separators=(",", ":")).encode("utf-8")
-        ).decode("ascii")
-        response.headers["X-IngeTrazo-Summary"] = encoded_summary
         elapsed_ms = (time.perf_counter() - started) * 1000
         response.headers["Server-Timing"] = f"ingetrazo;dur={elapsed_ms:.2f}"
         response.headers["X-IngeTrazo-Preview-Milliseconds"] = f"{elapsed_ms:.2f}"
@@ -993,6 +993,23 @@ def create_app(data_root: str | Path | None = None) -> FastAPI:
     if _FRONTEND.is_dir():
         app.mount("/", _ClientFiles(directory=_FRONTEND, html=True), name="frontend")
     return app
+
+
+def _embed_summary(path: Path, summary: dict) -> None:
+    """Write ``summary`` into the GLB at ``path`` as ``extras.ingetrazo_summary``."""
+    data = path.read_bytes()
+    magic, version, _length = struct.unpack_from("<4sII", data, 0)
+    json_length, json_type = struct.unpack_from("<I4s", data, 12)
+    if magic != b"glTF" or json_type != b"JSON":
+        raise ValueError("The preview is not a GLB file.")
+    document = json.loads(data[20:20 + json_length])
+    extras = document.get("extras") if isinstance(document.get("extras"), dict) else {}
+    document["extras"] = {**extras, "ingetrazo_summary": summary}
+    chunk = json.dumps(document, separators=(",", ":")).encode("utf-8")
+    chunk += b" " * (-len(chunk) % 4)              # chunks are 4-byte aligned, JSON padded with spaces
+    rest = data[20 + json_length:]
+    header = struct.pack("<4sII", b"glTF", version, 12 + 8 + len(chunk) + len(rest))
+    path.write_bytes(header + struct.pack("<I4s", len(chunk), b"JSON") + chunk + rest)
 
 
 class _ClientFiles(StaticFiles):

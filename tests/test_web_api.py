@@ -1,7 +1,6 @@
 """HTTP contract tests; skipped unless the optional web dependencies exist."""
 from __future__ import annotations
 
-import base64
 import json
 from pathlib import Path
 
@@ -441,7 +440,7 @@ def test_native_sheet_creation_and_revision_pinned_pdf(tmp_path):
     ).status_code == 404
 
 
-def test_preview_returns_glb_and_summary_header(tmp_path):
+def test_preview_returns_glb_with_the_summary_inside(tmp_path):
     client = TestClient(create_app(tmp_path / "data"))
     source = Path(__file__).parents[1] / "examples" / "arco-yanque.igz"
     with source.open("rb") as stream:
@@ -450,10 +449,14 @@ def test_preview_returns_glb_and_summary_header(tmp_path):
             files={"file": (source.name, stream, "application/octet-stream")},
         )
 
-    encoded = response.headers["X-IngeTrazo-Summary"]
-    summary = json.loads(base64.urlsafe_b64decode(encoded))
     assert response.status_code == 200
     assert response.content.startswith(b"glTF")
+    assert "X-IngeTrazo-Summary" not in response.headers      # too big for a header (#saved views)
+    import struct
+    length, kind = struct.unpack_from("<I4s", response.content, 12)
+    assert kind == b"JSON" and length % 4 == 0
+    assert struct.unpack_from("<I", response.content, 8)[0] == len(response.content)
+    summary = json.loads(response.content[20:20 + length])["extras"]["ingetrazo_summary"]
     assert float(response.headers["X-IngeTrazo-Preview-Milliseconds"]) >= 0
     assert "ingetrazo;dur=" in response.headers["Server-Timing"]
     assert response.headers["Cache-Control"] == "no-store"

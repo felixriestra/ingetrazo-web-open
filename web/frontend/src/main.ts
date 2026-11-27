@@ -868,9 +868,17 @@ function renderSelection(selection: PickInfo | null): void {
   }
 }
 
-function decodeSummary(encoded: string | null): SceneSummary {
-  if (!encoded) throw new Error("The server did not return document metadata.");
-  return JSON.parse(atob(encoded.replace(/-/g, "+").replace(/_/g, "/"))) as SceneSummary;
+/** The document summary the server writes into the preview GLB (its top-level extras). */
+async function glbSummary(blob: Blob): Promise<SceneSummary> {
+  const header = new DataView(await blob.slice(0, 20).arrayBuffer());
+  const jsonLength = header.byteLength === 20 ? header.getUint32(12, true) : 0;
+  if (header.getUint32(0, true) !== 0x46546c67 || header.getUint32(16, true) !== 0x4e4f534a) {
+    throw new Error("The server did not return a GLB preview.");
+  }
+  const json = JSON.parse(await blob.slice(20, 20 + jsonLength).text()) as {extras?: {ingetrazo_summary?: SceneSummary}};
+  const summary = json.extras?.ingetrazo_summary;
+  if (!summary) throw new Error("The server did not return document metadata.");
+  return summary;
 }
 
 function serverError(raw: string): Error {
@@ -905,11 +913,9 @@ function convert(file: File): Promise<{blob: Blob; summary: SceneSummary; server
         request.response.text().then((message: string) => reject(serverError(message)));
         return;
       }
-      resolve({
-        blob: request.response as Blob,
-        summary: decodeSummary(request.getResponseHeader("X-IngeTrazo-Summary")),
-        serverMs: Number(request.getResponseHeader("X-IngeTrazo-Preview-Milliseconds")) || 0,
-      });
+      const blob = request.response as Blob;
+      const serverMs = Number(request.getResponseHeader("X-IngeTrazo-Preview-Milliseconds")) || 0;
+      glbSummary(blob).then(summary => resolve({blob, summary, serverMs}), reject);
     };
     request.onerror = () => {
       if (activeUpload === request) activeUpload = undefined;
