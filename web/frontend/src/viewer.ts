@@ -36,6 +36,16 @@ export type WalkMode = "position_camera" | "walk" | "look_around" | "first_perso
 
 const toZup = (v: THREE.Vector3): [number, number, number] => [v.x, -v.z, v.y];
 
+
+/** An object's layer and the layers of the groups around it, outermost first. */
+function layerPath(semantic: Record<string, unknown> | undefined): string[] {
+  if (!semantic) return [];
+  const path = Array.isArray(semantic.layer_path)
+    ? semantic.layer_path.filter((name): name is string => typeof name === "string") : [];
+  if (typeof semantic.layer === "string" && !path.includes(semantic.layer)) path.push(semantic.layer);
+  return path;
+}
+
 export class IngeTrazoViewer {
   private readonly scene = new THREE.Scene();
   private readonly renderer: THREE.WebGLRenderer;
@@ -200,6 +210,15 @@ export class IngeTrazoViewer {
       if (!semantic) return;
       if (typeof semantic.layer === "string" && typeof semantic.layer_visible === "boolean") {
         this.layerVisibility.set(semantic.layer, semantic.layer_visible);
+      }
+      // The layers of the groups around it: a group on a hidden layer hides its contents.
+      const path = semantic.layer_path, pathVisible = semantic.layer_path_visible;
+      if (Array.isArray(path) && Array.isArray(pathVisible)) {
+        path.forEach((name, index) => {
+          if (typeof name === "string" && typeof pathVisible[index] === "boolean" && !this.layerVisibility.has(name)) {
+            this.layerVisibility.set(name, pathVisible[index] as boolean);
+          }
+        });
       }
       const visibilityId = typeof semantic.visibility_id === "string"
         ? semantic.visibility_id
@@ -1342,6 +1361,7 @@ export class IngeTrazoViewer {
       const semantic = this.semanticObject(object);
       if (typeof semantic?.layer === "string") {
         lines.userData.ingetrazo_layer = semantic.layer;
+        lines.userData.ingetrazo_layers = layerPath(semantic);
         lines.userData.ingetrazo_native_id = semantic.visibility_id ?? semantic.native_id;
         lines.visible = this.visibleInHierarchy(object);
       }
@@ -1430,21 +1450,25 @@ export class IngeTrazoViewer {
     return false;
   }
 
+  /** Whether every layer of an object and of the groups around it is shown. */
+  private layersVisible(layers: string[]): boolean {
+    return layers.every(name => this.layerVisibility.get(name) ?? true);
+  }
+
   private applyVisibility(): void {
     this.root.traverse(object => {
       const semantic = object.userData.ingetrazo_object as Record<string, unknown> | undefined;
       if (!semantic) return;
-      const layer = typeof semantic.layer === "string" ? semantic.layer : undefined;
       const nativeId = typeof semantic.visibility_id === "string"
         ? semantic.visibility_id
         : typeof semantic.native_id === "string" ? semantic.native_id : undefined;
-      object.visible = (layer ? this.layerVisibility.get(layer) ?? true : true)
-        && !this.isHidden(nativeId);
+      object.visible = this.layersVisible(layerPath(semantic)) && !this.isHidden(nativeId);
     });
     this.edgeRoot.traverse(object => {
+      const layers = object.userData.ingetrazo_layers as string[] | undefined;
       const layer = object.userData.ingetrazo_layer;
       const nativeId = object.userData.ingetrazo_native_id;
-      object.visible = (typeof layer === "string" ? this.layerVisibility.get(layer) ?? true : true)
+      object.visible = this.layersVisible(layers ?? (typeof layer === "string" ? [layer] : []))
         && !this.isHidden(typeof nativeId === "string" ? nativeId : undefined);
     });
     this.annotationRoot.traverse(object => {

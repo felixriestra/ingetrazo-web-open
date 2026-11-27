@@ -311,10 +311,11 @@ function renderSummary(data: SceneSummary): void {
   if (data.text_labels) addSummary("Text labels", data.text_labels.toLocaleString());
   if (data.guides) addSummary("Guides", data.guides.toLocaleString());
   if (data.reference_images) addSummary("Reference images", data.reference_images.toLocaleString());
-  addSummary("Units", data.units.length);
+  addSummary("Units", currentUnits.length);
   if (data.bounds.min && data.bounds.max) {
+    // The bounds are in metres; show them in the units named in the row above.
     const size = data.bounds.max.map((value, index) => value - data.bounds.min![index]);
-    addSummary("Size", size.map(value => value.toFixed(3)).join(" × "));
+    addSummary("Size", size.map(formatLength).join(" × "));
   }
   layersElement.replaceChildren();
   layerControls.clear();

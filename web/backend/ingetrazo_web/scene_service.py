@@ -156,7 +156,9 @@ def _group_parts(scene: Scene, group, object_id: str, parent_matrix, inherited: 
     Each nested object is its own node, named by its hierarchy path
     (``group:2/0/1``), so the browser can pick, select and hide it by itself. The
     placement matrices compose from the root down, a child with no paint of its own
-    wears its ancestors', and a hidden ancestor hides everything inside it.
+    wears its ancestors', and a hidden ancestor hides everything inside it. So does
+    an ancestor on a hidden layer: ``layer_path`` lists the layers from the root down
+    (each once), and the browser shows the object only while all of them are visible.
     """
     from PySide6.QtGui import QMatrix4x4
 
@@ -171,6 +173,11 @@ def _group_parts(scene: Scene, group, object_id: str, parent_matrix, inherited: 
     layer = scene.layer(layer_name)
     hidden = bool(inherited.get("hidden")) or bool(group.hidden)
     layer_visible = True if layer is None else bool(layer.visible)
+    layer_path = list(inherited.get("layer_path") or ())
+    if layer_name not in layer_path:
+        layer_path.append(layer_name)
+    path_visible = [True if scene.layer(name) is None else bool(scene.layer(name).visible)
+                    for name in layer_path]
     part = {
         "id": object_id,
         "visibility_id": object_id,
@@ -178,8 +185,10 @@ def _group_parts(scene: Scene, group, object_id: str, parent_matrix, inherited: 
         "name": str(group.name),
         "kind": "component" if group.is_component() else "group",
         "layer": layer_name,
-        "visible": layer_visible and not hidden,
         "layer_visible": layer_visible,
+        "layer_path": layer_path,
+        "layer_path_visible": path_visible,
+        "visible": layer_visible and not hidden and all(path_visible),
         "locked": bool(layer is not None and layer.locked),
         "hidden": hidden,
         **({"material": {key: material[key] for key in ("color", "opacity", "mat") if key in material}}
@@ -202,7 +211,8 @@ def _group_parts(scene: Scene, group, object_id: str, parent_matrix, inherited: 
                "face_ids": list(range(len(mesh.faces)))}
     for index, child in enumerate(group.children):
         yield from _group_parts(scene, child, f"{object_id}/{index}", matrix,
-                                {"material": material, "layer": layer_name, "hidden": hidden})
+                                {"material": material, "layer": layer_name, "hidden": hidden,
+                                 "layer_path": layer_path})
 
 
 def _semantic_parts(scene: Scene) -> list[dict[str, Any]]:

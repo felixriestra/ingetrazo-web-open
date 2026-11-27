@@ -146,6 +146,8 @@ def test_web_preview_keeps_top_level_objects_as_semantic_glb_nodes(tmp_path):
         "layer": "Structure",
         "visible": True,
         "layer_visible": True,
+        "layer_path": ["Structure"],
+        "layer_path_visible": [True],
         "locked": False,
         "hidden": False,
     }
@@ -501,3 +503,35 @@ def test_nested_objects_are_separate_nodes_with_inherited_state(tmp_path):
     mesh = gltf["meshes"][next(n["mesh"] for n in gltf["nodes"] if n["extras"]["ingetrazo_object"]["id"] == "group:0/0")]
     accessor = gltf["accessors"][mesh["primitives"][0]["attributes"]["POSITION"]]
     assert accessor["min"][0] == pytest.approx(10) and accessor["max"][0] == pytest.approx(11)
+
+
+def test_a_group_on_a_hidden_layer_hides_its_contents_in_the_preview(tmp_path):
+    """As in the engine (``Scene.placements``): the grass inside a group on the hidden
+    "Plot" layer is hidden, though the grass's own layer is visible. The browser gets
+    the layers from the root down, so turning "Plot" on shows it again."""
+    from core.group import Group
+    from core.layers import Layer
+
+    scene = Scene()
+    scene.layers.extend([Layer("Plot", visible=False), Layer("Exterior", visible=True)])
+    plot = Group(name="Plot")
+    plot.layer = "Plot"
+    grass = Group(name="Grass")
+    grass.layer = "Exterior"
+    grass.mesh.add_face([QVector3D(0, 0, 0), QVector3D(1, 0, 0), QVector3D(0, 1, 0)])
+    plot.adopt([grass])
+    scene.groups.append(plot)
+    source = tmp_path / "plot.igz"
+    target = tmp_path / "plot.glb"
+    save_scene(scene, source)
+    assert list(scene.placements()) == []              # the engine shows nothing
+
+    preview_igz(source, target)
+    gltf, _buffers = parse_container(target)
+    semantic = gltf["nodes"][0]["extras"]["ingetrazo_object"]
+
+    assert semantic["name"] == "Grass" and semantic["layer"] == "Exterior"
+    assert semantic["layer_visible"] is True
+    assert semantic["layer_path"] == ["Plot", "Exterior"]
+    assert semantic["layer_path_visible"] == [False, True]
+    assert semantic["visible"] is False

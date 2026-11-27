@@ -21,7 +21,7 @@ from .revision_history import effective_keep, revisions_to_prune, undo_state
 from .scene_service import (inspect_igz, load_igz, preview_igz, summarize_scene,
                             validate_igz_container, write_preview)
 
-PREVIEW_CACHE_VERSION = 11
+PREVIEW_CACHE_VERSION = 12
 SUMMARY_VERSION = 14
 
 
